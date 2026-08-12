@@ -124,11 +124,19 @@ def analyse(path, debug_path=None):
         # "what colour is this fighter's lit band, and what colour is the shadow
         # band". Percentiles over the pooled pixels answer that without needing
         # the sample rects to be perfectly matched across four body shapes.
+        #
+        # Note the percentile windows stop short of both extremes. The top of the
+        # range is rim light and specular — painted-on effects that sit *above*
+        # the albedo and are the brightest thing on a bare limb, so a naive "top
+        # quartile" reads a fighter's rim colour and calls it skin. The bottom is
+        # ink, crevices and cast shadow. What identifies a character is the lit
+        # plane between them.
         if pooled:
             ranked = sorted(pooled, key=lambda c: 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2])
-            k = max(len(ranked) // 4, 1)
-            entry['bandLit'] = stats(ranked[-k:])
-            entry['bandDark'] = stats(ranked[:k])
+            n = len(ranked)
+            cut = lambda a, b: ranked[max(int(n * a), 0):max(int(n * b), 1)]
+            entry['bandLit'] = stats(cut(0.58, 0.88))
+            entry['bandDark'] = stats(cut(0.06, 0.30))
             entry['all'] = stats(pooled)
         else:
             entry['bandLit'] = entry['bandDark'] = entry['all'] = None
