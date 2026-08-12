@@ -36,10 +36,12 @@ artifact instead of updating this one.
 | Post stack | ✅ landed | — |
 | Engine (states, combat, gauges, match) | ✅ landed | — |
 | Procedural textures | ✅ landed | — |
-| Costumes | 🔨 wave B1 (Kai + framework) | — |
-| Hair | 🔨 wave B1 | — |
-| Faces | 🔨 wave B1 | — |
-| Lighting + grade | 🔨 wave B1 | — |
+| Costumes | 🔨 Kai ✅, other three wave B3 | — |
+| Hair | ✅ landed | — |
+| Faces | 🔨 re-running (died to a 529) | — |
+| Lighting + grade | ✅ landed | — |
+| Ink contour | ✅ landed | 3px constant, 0% dropout |
+| Cel shading | 🔨 overcorrected to flat two-tone | — |
 | Animation clips | ⬜ wave C | — |
 | Stages | ⬜ wave C | — |
 | VFX (hitsparks, impact frames, dust) | ⬜ wave C | — |
@@ -59,8 +61,9 @@ results instantly, so only unfinished work re-runs.
 | Wave | Run ID | Script | State |
 | --- | --- | --- | --- |
 | A — core systems | `wf_b522008f-4bd` | `.../scripts/fight-wave-a-wf_b522008f-4bd.js` | ✅ 5/5, 0 errors |
-| B1 — costume fw, hair, faces, light | `wf_ee17e0d5-293` | `.../scripts/fight-wave-b1-wf_ee17e0d5-293.js` | in flight |
-| B2 — ink contour, cel shading | `wf_f293159d-9c2` | `.../scripts/fight-wave-b2-ink-wf_f293159d-9c2.js` | in flight (queued behind B1) |
+| B1 — costume fw, hair, faces, light | `wf_ee17e0d5-293` | `.../scripts/fight-wave-b1-wf_ee17e0d5-293.js` | 3/4 — faces died (529) |
+| B2 — ink contour, cel shading | `wf_f293159d-9c2` | `.../scripts/fight-wave-b2-ink-wf_f293159d-9c2.js` | ✅ 2/2 |
+| B3 — Mali/Davi/Vera costumes | `wf_5041dccd-4cb` | `.../scripts/fight-wave-b3-costumes-wf_5041dccd-4cb.js` | in flight |
 
 Script dir:
 `/root/.claude/projects/-home-user-2d-fight/8c969954-8496-5608-ae1a-3f71afc837ed/workflows/scripts/`
@@ -124,3 +127,29 @@ node tools/shots/capture.mjs --scene lineup --post 0               # bypass post
 2. Wave C: animation clips (fighting stances first — the current neutral pose
    reads as a slumped mannequin), first real stage, VFX.
 3. Stand up the blind critic harness and get a first score.
+
+---
+
+## Framework findings that must carry into every costume agent
+
+Discovered the hard way by the garment framework author. Paste these into any
+prompt that touches character geometry.
+
+1. **The body field is not Euclidean.** Each primitive scales distance by its
+   smallest cross-section factor (foot 0.34, torso 0.56), so tracing to
+   `field === t` puts cloth up to **3x too far** off the skin. Trace to the zero
+   level set and lift along `normalize(∇field)`.
+2. **A hanging arm is fused to the ribcage in the field** — a sideways ray from
+   the spine exits outside the biceps. That is what `follow`/`bridge` exist for,
+   and every sleeveless top hits it.
+3. **`ToonMaterial.uMap` is a multiplicative detail slot** (`base *= detail`) but
+   `fighterTextures()` returns full-colour albedo. Feeding albedo in squares the
+   dye — navy becomes black. Wire `normalMap` only.
+4. **Garments must not cast shadows.** The bias needed to stop a 4mm shell
+   shadowing its own back face is thicker than the shell, and you get black
+   dashes crawling across the cloth.
+5. **Fold *slope* breaks a cel ramp, not fold depth.** Keep
+   `2π·amplitude/wavelength` under ~0.12, or the terminator swings and drops a
+   whole band as a hard-edged blot.
+6. **The weave tiles are coarse** — render them at `tileMetres * 0.55` or they
+   read as a chevron blanket at character scale.

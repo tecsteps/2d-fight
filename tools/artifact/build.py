@@ -65,14 +65,18 @@ SYSTEMS = [
      "CNS-shaped states, CLSN boxes, hitstop, cancel hierarchy, gauges, match."),
     ("Procedural textures", "done", 4,
      "Noise kit, quilted / satin / knit / wrap weaves, skin, hair, stage."),
-    ("Costumes", "work", 1,
-     "Offset-surface garment shells with finished hems, plus draped free cloth."),
-    ("Hair", "work", 1,
-     "Braided mohawk, segmented braid, separate locs, tied topknot — geometry."),
+    ("Costumes", "work", 2,
+     "Kai fully dressed on the garment framework; other three in flight."),
+    ("Hair", "done", 4,
+     "Braided mohawk, segmented braid, 28 separate locs, tied topknot — geometry."),
     ("Faces", "work", 1,
      "Features as geometry, eyes with a catch light, expression controls."),
-    ("Lighting + grade", "work", 1,
-     "Fixing the orange crush that flattens four skin tones into one."),
+    ("Lighting + grade", "done", 4,
+     "Rig rebuilt; the floor pool that shaded fighters by screen position is gone."),
+    ("Ink contour", "done", 4,
+     "Constant 3px screen width, zero dropout, heavier where forms occlude."),
+    ("Cel shading", "work", 2,
+     "Hard terminator landed, but overcorrected into flat two-tone. Re-tuning."),
     ("Animation clips", "idle", 0,
      "Hand-keyed poses at a quantised draw rate to read as drawn, not lerped."),
     ("Stages", "idle", 0, "Parallax depth, animated crowd, volumetric light."),
@@ -82,6 +86,22 @@ SYSTEMS = [
 ]
 
 LOG = [
+    ("2026-08-12", "Kai is a character; the shading overcorrected",
+     "Costume framework, hair on all four, and a rewritten ink contour all "
+     "landed. The cel shading swung from soft Lambert to flat two-tone "
+     "posterization that no longer describes anatomy, and the frame went too "
+     "dark. Wave B3 dresses the other three while that is re-tuned."),
+    ("2026-08-12", "The dashed contour was slope-scaled polygon offset",
+     "polygonOffsetFactor is multiplied by depth slope, which is unbounded on "
+     "surfaces near-tangent to view — exactly where interior contours live — so "
+     "the ink shell was pushed behind the surface it had to draw over. Dropout "
+     "on Vera's inner shin went 29.5% to 0.0%, and line width now holds at 3px "
+     "whether the figure is 402px or 917px tall."),
+    ("2026-08-12", "Review 001: 13/50, would not win",
+     "A harsh critic measured rather than eyeballed, and caught two agents "
+     "reporting behaviour the pixels contradicted: shadows were warmer than lit "
+     "skin, not cooler, and the contour was a fresnel term rather than the "
+     "inverted-hull ink its module implements."),
     ("2026-08-12", "Wave B1 fanned out",
      "Costume framework, hair, faces, and a lighting fix — four narrowly scoped "
      "agents. Wave A taught the lesson: its two subsystem-sized agents ran two "
@@ -110,6 +130,10 @@ LOG = [
 ]
 
 SHOTS = [
+    ("full-0000.png", "Kai dressed, ink contour rebuilt",
+     "Costume, hair and continuous linework all land. The regression is just as "
+     "visible: shading has flattened into two flat tones that describe no "
+     "anatomy, and the whole frame is too dark."),
     ("lineup2-0000.png", "Four fighters — first real render",
      "Bodies, cel banding and ink outlines all working. Also the honest gap: "
      "nude, bald, faceless, and four distinct skin tones crushed into one "
