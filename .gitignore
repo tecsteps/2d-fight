@@ -3,6 +3,6 @@ dist/
 .vite/
 *.log
 .DS_Store
-shots/*.png
 .npr-bench/
 *.tmp
+shots/

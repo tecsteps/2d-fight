@@ -48,8 +48,18 @@ function place(id: string, x: number): { height: number; headY: number } {
   rig.root.rotation.y = yaw;
   rig.root.position.x = x;
   renderer.world.add(rig.root);
-  const chains = hairRigOf(rig.root.getObjectByName(`${def.id}:hair`)!)?.chains.length ?? 0;
-  console.log(`${def.id}: hair chains=${chains}`);
+  const hairGroup = rig.root.getObjectByName(`${def.id}:hair`)!;
+  const hairRig = hairRigOf(hairGroup);
+  const mat = hairRig?.meshes[0].material as unknown as {
+    uniforms: Record<string, { value: THREE.Color }>;
+  };
+  const c = mat.uniforms.uColor.value;
+  const s = mat.uniforms.uShadowColor.value;
+  console.log(
+    `${def.id}: chains=${hairRig?.chains.length} tris=${hairRig?.triangles} ` +
+      `base=${c.r.toFixed(3)},${c.g.toFixed(3)},${c.b.toFixed(3)} ` +
+      `shadow=${s.r.toFixed(3)},${s.g.toFixed(3)},${s.b.toFixed(3)}`,
+  );
   return { height: def.proportions.height, headY: rig.joints.head.y };
 }
 
