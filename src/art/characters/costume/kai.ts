@@ -66,6 +66,15 @@ const footOf = (side: 'L' | 'R') => (b: BoneName): boolean => b === `foot${side}
 const shinOf = (side: 'L' | 'R') => (b: BoneName): boolean =>
   b === `shin${side}` || b === `foot${side}` || b === `toe${side}`;
 
+/**
+ * What the gi lies on: the trunk *and* the thighs.
+ *
+ * The thighs matter at the hem. A skirt that follows the pelvis alone ends up
+ * buried inside the thigh where the two masses cross at the hip, and the leg
+ * pokes straight through it.
+ */
+const GI_FOLLOW = (b: BoneName): boolean => TORSO(b) || b === 'thighL' || b === 'thighR';
+
 export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCostume {
   const body: GarmentBody = rig;
   const m = rig.metrics;
@@ -84,19 +93,32 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
   // knee, then cinched hard into the cuff. That balloon-then-cinch is what
   // breaks the silhouette at the knee in the reference.
   const pantHemY = Y('knee') - (Y('knee') - Y('ankle')) * 0.34;
+  const pantWaistY = Y('hip') + m.torsoLen * 0.2;
+  // Authored against world height, not the axis parameter, so the balloon lands
+  // on the knee rather than wherever a proportion change moved that parameter to.
   const pantOffset = ramp([
-    [0.0, 0.005],
-    [0.12, 0.010],
-    [0.32, 0.024],
-    [0.5, 0.034],
-    [0.63, 0.041],
-    [0.72, 0.039],
-    [0.8, 0.016],
-    [1.0, 0.013],
+    [pantWaistY, 0.006],
+    [Y('hip') - 0.02, 0.010],
+    [Y('midThigh'), 0.017],
+    [Y('knee') + 0.055, 0.024],
+    [Y('knee'), 0.032],
+    [Y('knee') - 0.045, 0.038],
+    [pantHemY + 0.030, 0.019],
+    [pantHemY, 0.013],
   ]);
 
   for (const side of ['L', 'R'] as const) {
-    const axis = chainAxis(body, [`thigh${side}`, `shin${side}`, `foot${side}`] as BoneName[], 0);
+    const hip = rig.joints[`thigh${side}` as BoneName];
+    // The axis starts *above* the hip joint so the trousers cover the pelvis and
+    // their raw top edge can hide under the gi skirt. Started at the joint, the
+    // hem of the gi and the top of the trousers meet exactly at the one height
+    // where the thigh mass crosses the pelvis, and bare skin shows between them.
+    const axis = axisFromPoints([
+      new THREE.Vector3(hip.x * 0.55, pantWaistY, hip.z),
+      hip.clone(),
+      rig.joints[`shin${side}` as BoneName].clone(),
+      rig.joints[`foot${side}` as BoneName].clone(),
+    ]);
     const hemS = axis.sAtY(pantHemY);
     // The two legs share the pelvis, so each is clipped at the sagittal plane —
     // which is exactly a trouser inseam. They are given a hair's difference in
@@ -104,13 +126,21 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
     // coincident surfaces fighting for the same depth.
     const bias = side === 'L' ? 0 : 0.0006;
     const sign = side === 'L' ? 1 : -1;
+    // The angle pointing away from the other leg, in this shell's own frame.
+    const inner = sign > 0 ? Math.PI / 2 : -Math.PI / 2;
     const shell = buildShell(body, {
       axis,
       from: 0.0,
       to: hemS,
-      offset: (s) => pantOffset(s / hemS) + bias,
+      // Trousers are not a tube of even slack: they hang off the outside of the
+      // leg and are pressed flat between the thighs. Without this the two legs
+      // inflate into each other and the pair reads as one skirt.
+      offset: (s, _u, angle) => {
+        const inward = Math.max(0, -Math.cos(angle - inner));
+        return pantOffset(axis.pointAt(s).y) * (1 - 0.55 * inward ** 1.4) + bias;
+      },
       cloth: CLOTH * 1.15,
-      segments: 26,
+      segments: 30,
       radial: 44,
       lining: 4,
       // The waist end is raw on purpose: it lives under the gi skirt, and a hem
@@ -126,60 +156,73 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       geometry: shell.geometry,
       kind: 'cloth',
       color: p.secondary,
+      // The authored charcoal is a flat swatch; under a cel ramp its shadow band
+      // would go to near-black and take the leg's whole form with it.
+      shadowColor: 0x23252c,
       tex: tex.garments.pants,
       normalScale: 0.8,
+      specular: 0.12,
     }, out);
   }
 
   // --------------------------------------------------------------------- gi --
   // Trunk axis runs from under the hem to over the shoulders so both boundary
   // curves land inside the axis' range with room for their folds.
-  const giAxis = torsoAxis(body, Y('crotch') - 0.02, m.neckBaseY + 0.06);
-  const giHemY = Y('hip') - 0.028;
+  const giAxis = torsoAxis(body, Y('crotch') - 0.045, m.neckBaseY + 0.07);
+  const giHemY = Y('hip') - 0.05;
+  const neck = m.neckBaseY;
+  const obiTop = Y('hip') + m.torsoLen * 0.38;
 
   // The armhole rule, as one number. Zero below the armpit, so the gi lies on
-  // the ribs rather than following the fused arm outward; opening to 12 cm above
-  // it, so the shoulder rides over the deltoid and reads as a cap sleeve.
+  // the ribs rather than following the fused arm outward; opening above it, so
+  // the shoulder rides over the deltoid and reads as a cap sleeve. The armhole
+  // is *this* transition, not a notch cut in the top edge — the top edge stays
+  // up on the shoulder all the way round, exactly as in the reference.
   const giBridge = (s: number): number => {
     const y = giAxis.pointAt(s).y;
-    return 0.12 * THREE.MathUtils.smoothstep(y, armpit + 0.004, armpit + 0.062);
+    return 0.14 * THREE.MathUtils.smoothstep(y, armpit + 0.045, armpit + 0.105);
   };
 
-  // Top edge of the main body of the gi. The lapel diagonal is the load-bearing
-  // shape: it climbs to the character's right shoulder and falls away across the
-  // chest to disappear under the obi on the left, which is what makes a wrap
-  // front read as a wrap front and not as a T-shirt with a stripe painted on.
+  // Two panels cross at the front. This is the *over* panel, which carries the
+  // whole garment: anchored on the character's right shoulder, its free edge
+  // falls diagonally across the chest and vanishes into the obi on the left.
+  // Behind and on the right it is the back of the gi, so the edge is up on the
+  // shoulder there. The near-vertical step at +100 deg is where the panel ends
+  // and the under panel takes over — it sits in the left armpit, behind the arm.
   const giTop = edgeAtHeight(giAxis, [
-    [180, m.neckBaseY + 0.008],
-    [148, m.neckBaseY - 0.002],
-    [118, m.neckBaseY - 0.014],
-    [100, armpit + 0.085],
-    [88, armpit + 0.075],
-    [76, armpit + 0.06],
-    [66, Y('waist') + 0.012],
-    [40, Y('waist') + 0.05],
-    [14, Y('waist') + 0.115],
-    [-12, Y('waist') + 0.175],
-    [-38, Y('waist') + 0.255],
-    [-58, m.neckBaseY - 0.02],
-    [-76, m.neckBaseY - 0.012],
-    [-90, armpit + 0.08],
-    [-104, armpit + 0.09],
-    [-124, m.neckBaseY - 0.014],
-    [-152, m.neckBaseY - 0.002],
+    [180, neck + 0.012],
+    [150, neck + 0.010],
+    [124, neck + 0.007],
+    [106, neck + 0.003],
+    [92, neck - 0.004],
+    // The step: forward of here the over panel's free edge takes over, and the
+    // under panel is what covers the character's left shoulder.
+    [84, obiTop + 0.030],
+    [76, obiTop + 0.036],
+    [58, obiTop + 0.082],
+    [38, obiTop + 0.152],
+    [18, obiTop + 0.218],
+    [0, neck - 0.098],
+    [-16, neck - 0.072],
+    [-34, neck - 0.034],
+    [-52, neck + 0.004],
+    [-72, neck + 0.007],
+    [-96, neck + 0.001],
+    [-124, neck + 0.007],
+    [-152, neck + 0.010],
   ]);
-  // Side vents: the hem lifts at the hips, the way a gi skirt is slit.
+  // Side vents: the hem lifts a little at the hips, the way a gi skirt is slit.
   const giHem = byAngle([
     [0, giHemY],
-    [55, giHemY],
-    [82, giHemY + 0.045],
-    [98, giHemY + 0.045],
-    [125, giHemY],
+    [62, giHemY],
+    [86, giHemY + 0.022],
+    [94, giHemY + 0.022],
+    [118, giHemY],
     [180, giHemY],
-    [-125, giHemY],
-    [-98, giHemY + 0.045],
-    [-82, giHemY + 0.045],
-    [-55, giHemY],
+    [-118, giHemY],
+    [-94, giHemY + 0.022],
+    [-86, giHemY + 0.022],
+    [-62, giHemY],
   ]);
 
   const gi = buildShell(body, {
@@ -189,12 +232,12 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
     offset: LAYER.mid,
     cloth: CLOTH,
     segments: 30,
-    radial: 72,
+    radial: 76,
     lining: 5,
-    follow: TORSO,
+    follow: GI_FOLLOW,
     bridge: giBridge,
     fromEdge: { fold: 0.018, roll: 0.005, rings: 3 },
-    toEdge: { fold: 0.014, roll: 0.0045, rings: 3 },
+    toEdge: { fold: 0.013, roll: 0.0042, rings: 3 },
     drape: { folds: 6, amplitude: 0.0035, along: 1.8, seed: 3, sag: 0.003 },
     tileMetres: tex.garments.gi.tileMetres,
   });
@@ -203,35 +246,38 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
     geometry: gi.geometry,
     kind: 'cloth',
     color: p.primary,
+    shadowColor: 0x141f31,
     tex: tex.garments.gi,
     normalScale: 0.9,
+    specular: 0.16,
   }, out);
 
-  // The under-lapel: the panel the crossing one covers, visible only as the
-  // wedge of the V at the neck. It stops well below the over-panel's edge, so
-  // its own bottom is hidden rather than finished.
+  // The under panel. Anchored on the character's left shoulder, its free edge
+  // falls to the sternum where the over panel crosses it — from there down it is
+  // hidden, so only the far side of the V is ever seen. Its bottom edge is
+  // deliberately unfinished and parked well below the over panel's edge.
   const underTop = edgeAtHeight(giAxis, [
-    [22, Y('waist') + 0.145],
-    [40, Y('waist') + 0.215],
-    [58, m.neckBaseY - 0.028],
-    [76, m.neckBaseY - 0.014],
-    [96, armpit + 0.078],
-    [112, m.neckBaseY - 0.016],
-    [128, m.neckBaseY - 0.006],
+    [4, neck - 0.092],
+    [20, neck - 0.070],
+    [40, neck - 0.028],
+    [60, neck + 0.002],
+    [82, neck - 0.004],
+    [104, neck + 0.003],
+    [128, neck + 0.007],
   ]);
   const under = buildShell(body, {
     axis: giAxis,
-    from: giAxis.sAtY(Y('waist') - 0.03),
+    from: giAxis.sAtY(obiTop - 0.05),
     to: underTop,
-    offset: LAYER.mid - 0.0022,
-    segments: 8,
-    radial: 26,
+    offset: LAYER.mid - 0.0024,
+    segments: 10,
+    radial: 30,
     lining: 3,
-    arc: [22 * DEG, 128 * DEG],
+    arc: [4 * DEG, 128 * DEG],
     closed: false,
-    follow: TORSO,
+    follow: GI_FOLLOW,
     bridge: giBridge,
-    toEdge: { fold: 0.014, roll: 0.0045, rings: 3 },
+    toEdge: { fold: 0.013, roll: 0.0042, rings: 3 },
     tileMetres: tex.garments.gi.tileMetres,
   });
   attachGarment(rig, {
@@ -239,8 +285,10 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
     geometry: under.geometry,
     kind: 'cloth',
     color: p.primary,
+    shadowColor: 0x141f31,
     tex: tex.garments.gi,
     normalScale: 0.9,
+    specular: 0.16,
   }, out);
 
   // Collar band. Swept along the shells' own finished boundaries, so it cannot
@@ -253,7 +301,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       geometry: buildBand(curve, {
         width,
         thickness: CLOTH * 1.1,
-        lift: -CLOTH * 0.35,
+        lift: -CLOTH * 0.3,
         sides: 10,
         tileMetres: tex.garments.obi.tileMetres,
       }),
@@ -263,18 +311,18 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       specular: 0.35,
     }, out);
   };
-  collar(sliceBoundary(gi.to, -62, 74), 'giLapel', 0.026);
-  collar(sliceBoundary(gi.to, 106, 254), 'giCollarBack', 0.019);
-  collar(sliceBoundary(under.to, 26, 84), 'giUnderLapel', 0.021);
+  collar(sliceBoundary(gi.to, -100, 84), 'giLapel', 0.023);
+  collar(sliceBoundary(gi.to, 96, 264), 'giCollarBack', 0.017);
+  collar(sliceBoundary(under.to, 6, 88), 'giUnderLapel', 0.021);
 
   // -------------------------------------------------------------------- obi --
   // Wrapped twice: two shells, the upper one riding a little higher on the
   // character's left so the two passes read as one length of cloth spiralling
   // round rather than as two stacked rings.
-  const obiAxis = torsoAxis(body, Y('navel') - 0.09, Y('waist') + 0.09);
-  const obiLowY = Y('hip') + m.torsoLen * 0.13;
-  const obiMidY = Y('hip') + m.torsoLen * 0.265;
-  const obiTopY = Y('hip') + m.torsoLen * 0.395;
+  const obiAxis = torsoAxis(body, Y('navel') - 0.11, Y('waist') + 0.10);
+  const obiLowY = Y('hip') + m.torsoLen * 0.175;
+  const obiMidY = Y('hip') + m.torsoLen * 0.285;
+  const obiTopY = obiTop;
 
   const obiWraps: { name: string; from: (a: number) => number; to: (a: number) => number; offset: number }[] = [
     {
@@ -311,6 +359,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       geometry: shell.geometry,
       kind: 'cloth',
       color: p.accent,
+      shadowColor: 0x7c3210,
       tex: tex.garments.obi,
       specular: 0.32,
       normalScale: 1.1,
@@ -365,15 +414,15 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       specular: 0.32,
     }, out);
   };
-  loop(0.040, 0.026, 0.006, 0.030, 'obiKnot');
-  loop(0.013, 0.030, 0.010, 0.020, 'obiCinch');
+  loop(0.030, 0.019, 0.005, 0.025, 'obiKnot');
+  loop(0.011, 0.024, 0.008, 0.017, 'obiCinch');
 
   // Two loose ends, relaxed under gravity against the hip. Different lengths,
   // opposite lateral bias and different flutter phase, because two tails baked
   // from the same parameters hang as mirror images and the eye catches it.
   const tails: { len: number; bias: number; width: number; seed: number; flutter: number }[] = [
-    { len: 0.30, bias: -0.55, width: 0.072, seed: 21, flutter: 0.026 },
-    { len: 0.205, bias: 0.7, width: 0.062, seed: 34, flutter: 0.02 },
+    { len: 0.315, bias: 0.28, width: 0.070, seed: 21, flutter: 0.028 },
+    { len: 0.195, bias: 0.85, width: 0.058, seed: 34, flutter: 0.018 },
   ];
   for (let i = 0; i < tails.length; i++) {
     const t = tails[i];
@@ -574,7 +623,7 @@ function buildShoes(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
       // ankle runs straight into the shin, and the shoe grows up the leg.
       follow: footOf(side),
       // Below the sole line the white midsole takes over, so the navy stops there.
-      keepSide: { normal: UP, d: 0.0105 },
+      keepSide: { normal: UP, d: 0.0155 },
       fromEdge: { fold: 0.008, roll: 0.004, rings: 3 },
       toEdge: { fold: 0.008, roll: 0.004, rings: 3 },
       drape: { folds: 5, amplitude: 0.0012, along: 2, seed: 61 },
@@ -585,6 +634,7 @@ function buildShoes(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
       geometry: upper.geometry,
       kind: 'leather',
       color: p.boots,
+      shadowColor: 0x141f33,
       tex: tex.boots,
       normalScale: 0.7,
       specular: 0.4,
@@ -596,12 +646,12 @@ function buildShoes(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
       axis,
       from: 0.015,
       to: 0.98,
-      offset: 0.0115,
+      offset: 0.0125,
       cloth: 0.005,
       segments: 22,
       radial: 30,
       lining: 3,
-      arc: [126 * Math.PI / 180, 234 * Math.PI / 180],
+      arc: [112 * Math.PI / 180, 248 * Math.PI / 180],
       closed: false,
       front: UP,
       left: LEFT,

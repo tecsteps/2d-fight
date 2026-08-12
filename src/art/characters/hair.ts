@@ -101,6 +101,8 @@ interface Bind {
   w: [number, number, number];
 }
 
+const DEG = Math.PI / 180;
+
 /** Index of the head bone in the hair skeleton. Everything rigid binds here. */
 const HEAD = 0;
 const RIGID: Bind = { i: [HEAD, 0, 0], w: [1, 0, 0] };
@@ -423,8 +425,18 @@ function profile(samples: number[]): (theta: number) => number {
   };
 }
 
+/**
+ * How much deeper the shell's rim runs than the *visible* hairline.
+ *
+ * The rim sinks into the skull and the mass reaches full thickness a short way
+ * up, so the surfaces cross — and the crossing is what the eye reads as the
+ * hairline. Solving `T·s = 0.9·T·(1-s)` for the smoothstep puts it at 85% of the
+ * rim angle, so `edge` can be authored as the line an artist would draw.
+ */
+const HAIRLINE_SINK = 1 / 0.854;
+
 interface ScalpSpec {
-  /** Hairline polar angle (degrees from the crown) at five azimuths, front → back. */
+  /** Visible hairline, in degrees of polar angle from the crown, at five azimuths front → back. */
   edge: number[];
   /** Hair mass thickness in metres at the same five azimuths. */
   thickness: number[];
@@ -450,7 +462,7 @@ interface ScalpSpec {
 function scalp(buf: Buf, skull: Skull, spec: ScalpSpec, n: Noise): void {
   const cols = spec.cols ?? 56;
   const rows = spec.rows ?? 12;
-  const edge = profile(spec.edge.map((d) => (d * Math.PI) / 180));
+  const edge = profile(spec.edge.map((d) => d * DEG * HAIRLINE_SINK));
   const thick = profile(spec.thickness);
   const outer: number[][] = [];
   const inner: number[][] = [];
@@ -670,7 +682,43 @@ function chain(
 // Fighters
 // ---------------------------------------------------------------------------
 
-const DEG = Math.PI / 180;
+/**
+ * A loose strand escaping at the temple.
+ *
+ * Every gathered hairstyle needs a couple of these or the head reads as a
+ * moulded shape sitting on a neck. They are short, they curve *back* toward the
+ * jaw rather than hanging straight down, and they taper to nothing — a straight
+ * flat strand at a fixed distance from the skull looks like a plastic blade.
+ */
+function wisp(
+  ctx: Ctx,
+  buf: Buf,
+  side: number,
+  o: { theta: number; phi: number; length: number; radius: number; name: string },
+): void {
+  const { skull } = ctx;
+  const root = skull.at(side * o.theta, o.phi, o.radius * 0.7);
+  const out = skull.normalAt(side * o.theta, o.phi).multiplyScalar(o.radius * 1.6);
+  const mid = root
+    .clone()
+    .add(out)
+    .add(new THREE.Vector3(0, -o.length * 0.45, o.length * 0.06));
+  const tip = root
+    .clone()
+    .add(out.clone().multiplyScalar(0.35))
+    .add(new THREE.Vector3(-side * o.length * 0.06, -o.length, -o.length * 0.1));
+  const frames = buildFrames(curvePoints([root, mid, tip], 14), new THREE.Vector3(0, 0, 1));
+  const bind = chain(ctx, `${ctx.def.id}:${o.name}`, frames, 2, () => o.radius, 0.25, 0.95, 0.22);
+  sweep(buf, frames, {
+    radius: (t) => o.radius * (1 - 0.35 * t),
+    flat: () => 0.7,
+    sides: 7,
+    bind,
+    tile: ctx.tile,
+    tip: true,
+    capStart: true,
+  });
+}
 
 /**
  * Kai — black hair in a short spiky topknot under an orange headband.
@@ -685,7 +733,10 @@ function buildKai(ctx: Ctx): void {
   const R = skull.R;
 
   scalp(hair, skull, {
-    edge: [86, 96, 108, 118, 126],
+    // φ = 90° is the widest point of the cranium and sits a couple of centimetres
+    // above the brow: that is where a hairline belongs, and the nape runs well
+    // past it into a V.
+    edge: [90, 98, 112, 122, 130],
     thickness: [R * 0.22, R * 0.24, R * 0.22, R * 0.26, R * 0.28],
     crown: R * 0.34,
     // Mass behind the crown, because the hair is gathered backward into the
@@ -710,7 +761,7 @@ function buildKai(ctx: Ctx): void {
     const mid = skull.at(theta + sweepTo * 0.45, 90 * DEG, R * 0.36 + R * 0.06 * jitter);
     // Alternating long and short locks. A fringe whose tips all land on the same
     // line is a bowl cut; the jagged edge is the whole silhouette here.
-    const drop = (i % 2 === 0 ? 1.15 : 0.45) + 0.35 * jitter;
+    const drop = (i % 2 === 0 ? 1.0 : 0.6) + 0.3 * jitter;
     const tip = skull.at(theta + sweepTo, (94 + 13 * drop) * DEG, R * (0.34 + 0.12 * jitter));
     const frames = buildFrames(
       curvePoints([root, mid, tip], 14),
@@ -720,7 +771,7 @@ function buildKai(ctx: Ctx): void {
     sweep(hair, frames, {
       // Roots overlap so no scalp shows through; tips run out to a point so the
       // gaps between locks open up as V-shaped notches.
-      radius: (t) => R * (0.25 + 0.05 * jitter) * (1 - 0.72 * t * t),
+      radius: (t) => R * (0.25 + 0.05 * jitter) * (1 - 0.58 * t * t),
       flat: () => 0.38,
       sides: 8,
       tile: ctx.tile,
@@ -875,9 +926,12 @@ function buildMali(ctx: Ctx): void {
   const R = skull.R;
 
   scalp(hair, skull, {
-    edge: [82, 90, 106, 116, 122],
-    thickness: [R * 0.11, R * 0.12, R * 0.13, R * 0.17, R * 0.2],
-    crown: R * 0.15,
+    edge: [88, 96, 110, 120, 126],
+    thickness: [R * 0.14, R * 0.15, R * 0.16, R * 0.21, R * 0.26],
+    crown: R * 0.2,
+    // Pulled back: the mass grows toward the gather, and nothing stands up at
+    // the crown. Sleek is the read, so the only volume is behind.
+    lift: (theta, v) => R * 0.06 * smoothstep(0.3, 1, v) * clamp01(-Math.cos(theta)),
     tile: ctx.tile,
   }, n);
 
@@ -948,21 +1002,12 @@ function buildMali(ctx: Ctx): void {
 
   // Loose wisps at the temples, falling in front of the ears.
   for (const side of [-1, 1]) {
-    const theta = side * 68 * DEG;
-    const root = skull.at(theta, 92 * DEG, R * 0.09);
-    const tip = skull.at(theta + side * 4 * DEG, 128 * DEG, R * 0.02);
-    tip.y -= skull.headLen * (side < 0 ? 0.3 : 0.2);
-    tip.z += skull.headLen * 0.05;
-    const wf = buildFrames(curvePoints([root, root.clone().lerp(tip, 0.45), tip], 12), new THREE.Vector3(0, 1, 0));
-    const wb = chain(ctx, `${ctx.def.id}:wisp${side > 0 ? 'L' : 'R'}`, wf, 2, () => R * 0.05, 0.3, 0.9, 0.25);
-    sweep(hair, wf, {
-      radius: (t) => R * 0.075 * (1 - 0.5 * t),
-      flat: () => 0.55,
-      sides: 7,
-      bind: wb,
-      tile: ctx.tile,
-      tip: true,
-      capStart: true,
+    wisp(ctx, hair, side, {
+      theta: 66 * DEG,
+      phi: 100 * DEG,
+      length: skull.headLen * (side < 0 ? 0.42 : 0.3),
+      radius: R * 0.085,
+      name: `wisp${side > 0 ? 'L' : 'R'}`,
     });
   }
 }
@@ -981,7 +1026,7 @@ function buildDavi(ctx: Ctx): void {
   const HL = skull.headLen;
 
   scalp(hair, skull, {
-    edge: [88, 96, 108, 118, 124],
+    edge: [94, 100, 112, 122, 128],
     thickness: [R * 0.1, R * 0.11, R * 0.12, R * 0.14, R * 0.15],
     crown: R * 0.14,
     tile: ctx.tile,
@@ -989,9 +1034,11 @@ function buildDavi(ctx: Ctx): void {
 
   const locR = R * 0.15;
   // The gather: where the blue tie holds the back locs together.
-  const gather = skull.at(180 * DEG, 104 * DEG, R * 0.34);
+  const gather = skull.at(180 * DEG, 104 * DEG, R * 0.42);
 
-  const BACK = 13;
+  const ROWS = [22, 46, 70];
+  const PER_ROW = 6;
+  const BACK = ROWS.length * PER_ROW;
   const FRONT = 6;
 
   for (let i = 0; i < BACK + FRONT; i++) {
@@ -1004,32 +1051,40 @@ function buildDavi(ctx: Ctx): void {
     let stiff: number;
 
     if (!front) {
-      // Roots spread over the crown, paths converge on the gather, then fan out
-      // below it — which is exactly how a tied bundle of locs behaves.
-      const spread = (k / (BACK - 1)) * 2 - 1;
-      const theta = spread * 118 * DEG;
-      const phi = (26 + 46 * j0) * DEG;
-      const root = skull.at(theta, phi, R * 0.1);
-      const bend = skull.at(theta * 0.5, (72 + 20 * j1) * DEG, R * 0.26);
-      const knot = gather.clone().add(new THREE.Vector3(spread * R * 0.16, R * 0.1 * (j1 - 0.5), R * 0.05 * j2));
-      const len = HL * (0.62 + 0.5 * j1);
-      const tipX = spread * HL * (0.24 + 0.16 * j2);
-      const tail = new THREE.Vector3(tipX * 0.5, knot.y - len * 0.55, knot.z - HL * 0.05 * j0);
-      const tip = new THREE.Vector3(tipX, knot.y - len, knot.z - HL * (0.04 + 0.1 * j2));
-      pts.push(root, bend, knot, tail, tip);
+      // Roots cover the scalp in rows, and every loc then *lies along the skull*
+      // on its way back to the gather. Locs that arc out into the air instead
+      // read as a crown of sausages, which is the failure mode here.
+      const row = Math.floor(k / PER_ROW);
+      const col = k % PER_ROW;
+      const spread = ((col + 0.5) / PER_ROW) * 2 - 1;
+      const theta = spread * (135 - row * 12) * DEG;
+      const phi = (ROWS[row] + 10 * j0) * DEG;
+      const back = Math.sign(theta || 1) * 180 * DEG;
+      const root = skull.at(theta, phi, locR * 0.8);
+      const mid = skull.at(
+        theta + (back - theta) * 0.5,
+        phi + (100 - phi / DEG) * DEG * 0.55,
+        locR * 0.9,
+      );
+      const knot = gather.clone().add(new THREE.Vector3(spread * R * 0.2, R * 0.12 * (j1 - 0.5), 0));
+      const len = HL * (0.5 + 0.45 * j1);
+      const tipX = spread * HL * (0.2 + 0.16 * j2);
+      const tail = new THREE.Vector3(tipX * 0.5, knot.y - len * 0.55, knot.z - HL * 0.04 * j0);
+      const tip = new THREE.Vector3(tipX, knot.y - len, knot.z - HL * (0.02 + 0.09 * j2));
+      pts.push(root, mid, knot, tail, tip);
       stiff = 0.55;
     } else {
       // Face-framing locs: they leave the temple, clear the ear and hang free.
       const side = k % 2 === 0 ? 1 : -1;
       const rank = Math.floor(k / 2);
-      const theta = side * (54 + 16 * rank) * DEG;
-      const root = skull.at(theta, (52 + 22 * j0) * DEG, R * 0.1);
-      const bend = skull.at(theta * 1.04, (104 + 8 * j1) * DEG, R * 0.24);
-      const len = HL * (0.5 + 0.42 * j2 + 0.16 * rank);
+      const theta = side * (58 + 14 * rank) * DEG;
+      const root = skull.at(theta, (46 + 20 * j0) * DEG, locR * 0.8);
+      const bend = skull.at(theta * 1.02, (100 + 6 * j1) * DEG, locR * 1.1);
+      const len = HL * (0.34 + 0.2 * j2 + 0.1 * rank);
       const tip = bend
         .clone()
-        .add(new THREE.Vector3(side * HL * 0.07 * j1, -len, HL * (0.04 - 0.14 * j0)));
-      pts.push(root, bend, bend.clone().lerp(tip, 0.5).add(new THREE.Vector3(0, 0, HL * 0.02)), tip);
+        .add(new THREE.Vector3(side * HL * 0.05 * j1, -len, HL * (0.02 - 0.1 * j0)));
+      pts.push(root, bend, bend.clone().lerp(tip, 0.5).add(new THREE.Vector3(0, 0, HL * 0.015)), tip);
       stiff = 0.3;
     }
 
@@ -1048,7 +1103,7 @@ function buildDavi(ctx: Ctx): void {
     });
 
     // A few locs carry blue beads.
-    if (!front && k % 4 === 1) {
+    if (!front && k % 7 === 1) {
       const c = 0.62 + 0.12 * j2;
       const lo = Math.max(0, Math.round((c - 0.035) * (frames.length - 1)));
       const hi = Math.min(frames.length - 1, Math.round((c + 0.035) * (frames.length - 1)));
@@ -1157,24 +1212,15 @@ function buildVera(ctx: Ctx): void {
     });
   }
 
-  // One loose strand at the temple: the shaved side needs something growing out
+  // One loose strand at each temple: the shaved side needs something growing out
   // of it or the head reads as a helmet with a crest bolted on.
   for (const side of [-1, 1]) {
-    const theta = side * 62 * DEG;
-    const root = skull.at(theta, 100 * DEG, R * 0.05);
-    const tip = skull.at(theta - side * 4 * DEG, 126 * DEG, R * 0.02);
-    tip.y -= skull.headLen * (side < 0 ? 0.34 : 0.18);
-    tip.z += skull.headLen * 0.03;
-    const wf = buildFrames(curvePoints([root, root.clone().lerp(tip, 0.5), tip], 10), new THREE.Vector3(0, 1, 0));
-    const wb = chain(ctx, `${ctx.def.id}:wisp${side > 0 ? 'L' : 'R'}`, wf, 2, () => R * 0.05, 0.3, 0.9, 0.3);
-    sweep(hair, wf, {
-      radius: (t) => R * 0.06 * (1 - 0.45 * t),
-      flat: () => 0.65,
-      sides: 6,
-      bind: wb,
-      tile: ctx.tile,
-      tip: true,
-      capStart: true,
+    wisp(ctx, hair, side, {
+      theta: 58 * DEG,
+      phi: 104 * DEG,
+      length: skull.headLen * (side < 0 ? 0.34 : 0.2),
+      radius: R * 0.07,
+      name: `wisp${side > 0 ? 'L' : 'R'}`,
     });
   }
 }
@@ -1182,6 +1228,19 @@ function buildVera(ctx: Ctx): void {
 // ---------------------------------------------------------------------------
 // Materials
 // ---------------------------------------------------------------------------
+
+/**
+ * The tone the strand maps are generated at.
+ *
+ * The shading model multiplies its base colour by the map, so the map has to be
+ * a *detail* field around a neutral value — ask the texture library for hair in
+ * Kai's near-black and you get a map whose mean is a fiftieth of the colour it
+ * was asked for, which multiplied by that same colour again is a black hole.
+ * Generated grey, the same call gives exactly what the shader wants: the strand
+ * structure, the gaps between locks, the lift on the lit fibres — all relative,
+ * and all tinted by the palette at shade time.
+ */
+const DETAIL_GREY = 0x9d9d9d;
 
 const gainCache = new Map<string, THREE.Color>();
 
@@ -1304,9 +1363,9 @@ export function buildHair(rig: BuiltCharacter, def: FighterDef = rig.def): THREE
   const base = hairBase(p);
   const strandTex: TexSet =
     def.id === 'davi'
-      ? hairStrands({ color: p.hair, sheenColor: p.hairSheen, style: 'locs', seed, strands: 11, twist: 7 })
+      ? hairStrands({ color: DETAIL_GREY, sheenColor: p.hairSheen, style: 'locs', seed, strands: 11, twist: 7 })
       : hairStrands({
-          color: p.hair,
+          color: DETAIL_GREY,
           sheenColor: p.hairSheen,
           style: 'strand',
           // ~5 mm per lock at the tile size below. Finer than that and the map is
@@ -1342,7 +1401,7 @@ export function buildHair(rig: BuiltCharacter, def: FighterDef = rig.def): THREE
   });
 
   const fuzzTex = hairStrands({
-    color: p.hair,
+    color: DETAIL_GREY,
     sheenColor: p.hairSheen,
     style: 'strand',
     seed: seed + 9,
@@ -1353,7 +1412,10 @@ export function buildHair(rig: BuiltCharacter, def: FighterDef = rig.def): THREE
   });
   // Shaved hair shows the scalp between the stubble, so it sits between the hair
   // colour and the skin's own shadow — never the flat hair colour thinned down.
-  const shavedColor = hairBase(p).lerp(new THREE.Color(p.skinShadow), 0.34);
+  // Built from the *dark* hair tone, not the lit one: a shaved side is scalp
+  // showing through a millimetre of stubble, so it is duller and darker than any
+  // grown hair on the same head — the one thing that stops it reading as skin.
+  const shavedColor = new THREE.Color(p.hair).lerp(new THREE.Color(p.skinShadow), 0.4);
   const fuzzMat = createToonMaterial({
     kind: 'hair',
     color: detailBase(fuzzTex.map, shavedColor),

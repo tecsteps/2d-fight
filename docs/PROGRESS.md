@@ -28,6 +28,7 @@ artifact instead of updating this one.
 | System | State | Critic score |
 | --- | --- | --- |
 | Build + capture pipeline | ✅ green | — |
+| **Overall frame (review 001)** | 🔨 | **13 / 50 — would not win** |
 | Deterministic sim core (loop, RNG, input) | ✅ landed | — |
 | Roster data (4 fighters) | ✅ landed | — |
 | Character rig + body mesh | ✅ landed | — |
@@ -78,8 +79,25 @@ Design sheets in `/reference` (art direction only — never imported).
 
 ---
 
+## Reviews
+
+| # | Frame | Score | Verdict |
+| --- | --- | --- | --- |
+| [001](reviews/001-lineup-baseline.md) | baseline lineup | 13 / 50 | no — ~15% there |
+
+Review 001 caught two places where a wave-A agent's self-report did not match the
+pixels (shadows measured *warmer* than lit skin, not cooler; the ink outline is a
+fresnel term, not the inverted hull it claims). **Agent self-reports are not
+verification — measure the frame.**
+
+---
+
 ## Open items
 
+- **KOF XIII reference frames are needed for a real blind comparison.** The egress
+  policy blocks every image host (403 on CONNECT), so `tools/critic/sheet.py`
+  runs in rubric mode. Drop frames into `reference/kof13/` and blind mode
+  switches on automatically.
 - The roster gallery URL (`fighter-roster-gallery.fabianwesner.chatgpt.site`) is
   blocked by org egress policy. Character definitions were built from the design
   sheets the project owner uploaded directly. If the site carries stats or lore

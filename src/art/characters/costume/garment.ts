@@ -11,20 +11,19 @@ import type { TexSet } from '../../textures';
  * The garment toolkit.
  *
  * Clothing here is never modelled "near" the body — it is **extracted from it**.
- * The body is an implicit field (`src/art/characters/body.ts`), so the surface
- * `fieldAt(p) === t` is the body inflated by exactly `t` metres, everywhere, for
- * every fighter, with no fitting pass. Every shell, band and trim in this file
- * is a piece of one of those offset surfaces, found by tracing rays outward from
- * an anatomical axis until the field reaches the wanted thickness.
+ * The body is an implicit field (`src/art/characters/body.ts`), so every shell,
+ * band and trim in this file is a patch of a true offset surface of that body:
+ * rays are fired outward from an anatomical axis to find the skin exactly, and
+ * the cloth is then lifted off it along the surface normal by the layer's
+ * thickness. There is no fitting pass, and nothing is authored per fighter.
  *
  * Three consequences are worth stating up front, because they are what make the
  * approach worth its cost:
  *
- * 1. **Layering is guaranteed, not tuned.** The surface at offset `a` is
- *    strictly inside the surface at offset `b` whenever `a < b`, no matter which
- *    axis, arc or ray found the points. So two garments cannot z-fight as long
- *    as their offsets differ — see `LAYER` and `over()`. This is the single
- *    biggest reason not to model cloth as extruded panels.
+ * 1. **Layering is guaranteed, not tuned.** Two garments over the same skin at
+ *    offsets `a < b` are strictly nested, whichever axis or arc found them,
+ *    because both are lifted along the same surface normal. So they cannot
+ *    z-fight as long as their offsets differ — see `LAYER` and `over()`.
  * 2. **Topology is a grid.** One quad per (angle, position-along-axis) cell,
  *    which means clean UVs (in *metres*, so a weave tiles at its real physical
  *    size), clean skinning, and a boundary that is a curve you can hand to
@@ -35,8 +34,9 @@ import type { TexSet } from '../../textures';
  *    profile. Nothing is ever trimmed after the fact, so every edge is a real,
  *    finished, rolled hem rather than a raw cut that reads as paint.
  *
- * Ordering: build shells inner-layer-first, attach with `attachGarment`, then
- * call `finishCostume` once so the ink pass sees every new mesh.
+ * Ordering: build shells inner-layer-first and attach each with `attachGarment`;
+ * `buildCostume` in `./index.ts` re-runs the ink pass once at the end so the
+ * outline shells see every garment that was added.
  */
 
 // ---------------------------------------------------------------------------
@@ -395,6 +395,37 @@ export function traceOffset(
 }
 
 /**
+ * Outward unit normal of the body surface at `p`.
+ *
+ * This is why garments are lifted along the normal rather than along the ray
+ * that found the surface: the body's field is **not** a Euclidean distance
+ * field. Each primitive scales its distance by the smallest of its
+ * cross-section factors, so a squashed volume — the foot is 0.34 — reports a
+ * third of the true distance, and a garment traced to `field === 0.008` there
+ * would sit 24 mm off the skin instead of 8. Tracing to the *zero* level set is
+ * exact regardless, and one gradient turns "8 mm of cloth" back into 8 mm.
+ */
+function surfaceNormal(
+  plan: BodyPlan,
+  p: THREE.Vector3,
+  subset: Int32Array | null,
+  out: THREE.Vector3,
+): boolean {
+  const h = 0.0022;
+  const f = (x: number, y: number, z: number) =>
+    subset ? sampleField(plan.prims, x, y, z, subset) : fieldAt(plan, x, y, z);
+  out.set(
+    f(p.x + h, p.y, p.z) - f(p.x - h, p.y, p.z),
+    f(p.x, p.y + h, p.z) - f(p.x, p.y - h, p.z),
+    f(p.x, p.y, p.z + h) - f(p.x, p.y, p.z - h),
+  );
+  const len = out.length();
+  if (len < 1e-9) return false;
+  out.multiplyScalar(1 / len);
+  return true;
+}
+
+/**
  * Orthonormal angular frame at a point on an axis.
  *
  * `front` and `left` are world hints, each projected perpendicular to the
@@ -709,6 +740,8 @@ export function buildShell(body: GarmentBody, o: ShellOptions): ShellResult {
   const el = new THREE.Vector3();
   const dir = new THREE.Vector3();
   const vtx = new THREE.Vector3();
+  const skin = new THREE.Vector3();
+  const nrm = new THREE.Vector3();
 
   const fromB: Boundary = { points: [], normals: [], u: [], angle: [] };
   const toB: Boundary = { points: [], normals: [], u: [], angle: [] };
@@ -735,20 +768,31 @@ export function buildShell(body: GarmentBody, o: ShellOptions): ShellResult {
       angularFrame(T, front, left, ef, el);
       dir.copy(ef).multiplyScalar(Math.cos(angle)).addScaledVector(el, Math.sin(angle));
 
-      const off = radialAt(o.offset, s, u, angle);
-      let r = traceOffset(body.plan, P, dir, off, maxR, subset);
+      let r = traceOffset(body.plan, P, dir, 0, maxR, subset);
+      let grad = subset;
       if (subset && o.bridge !== undefined) {
         const bridge = radialAt(o.bridge, s, u, angle);
-        if (bridge > 0) r = Math.min(traceOffset(body.plan, P, dir, off, maxR, null), r + bridge);
+        if (bridge > 0) {
+          const rFull = traceOffset(body.plan, P, dir, 0, maxR, null);
+          // Either the real body surface is within reach, in which case the cloth
+          // lies on it, or it is not and the cloth spans the gap at the limit of
+          // what the garment allows.
+          if (rFull <= r + bridge) {
+            r = rFull;
+            grad = null;
+          } else r += bridge;
+        }
       }
       if (o.maxRadius !== undefined) r = Math.min(r, radialAt(o.maxRadius, s, u, angle));
-      if (drape) r += drape(u, nd.mix);
+      skin.copy(P).addScaledVector(dir, Math.max(r, 0.001));
+      if (!surfaceNormal(body.plan, skin, grad, nrm)) nrm.copy(dir);
+
+      let lift = radialAt(o.offset, s, u, angle) + nd.dr;
+      if (drape) lift += drape(u, nd.mix);
       // Cloth is heavier than it is stiff: it stands off the body a little more
       // where gravity pulls it away from the form than where it lies on it.
-      if (sag > 0) r += sag * Math.max(0, -dir.y) * nd.mix;
-      r += nd.dr;
-
-      vtx.copy(P).addScaledVector(dir, Math.max(r, 0.001));
+      if (sag > 0) lift += sag * Math.max(0, -nrm.y) * nd.mix;
+      vtx.copy(skin).addScaledVector(nrm, lift);
       if (o.keepSide) {
         const excess = o.keepSide.d - vtx.dot(o.keepSide.normal);
         if (excess > 0) vtx.addScaledVector(o.keepSide.normal, excess);
@@ -756,19 +800,19 @@ export function buildShell(body: GarmentBody, o: ShellOptions): ShellResult {
 
       const b = (i * N + jj) * 3;
       pos[b] = vtx.x; pos[b + 1] = vtx.y; pos[b + 2] = vtx.z;
-      radial[b] = dir.x; radial[b + 1] = dir.y; radial[b + 2] = dir.z;
+      radial[b] = nrm.x; radial[b + 1] = nrm.y; radial[b + 2] = nrm.z;
       uv[(i * N + jj) * 2 + 1] = (s * axis.length) / tile;
 
       if (i === 0) {
         fromB.points.push(vtx.clone());
-        fromB.normals.push(dir.clone());
+        fromB.normals.push(nrm.clone());
         fromB.u.push(u);
         fromB.angle.push(angle);
         ringMid.copy(vtx);
       }
       if (i === Ro - 1) {
         toB.points.push(vtx.clone());
-        toB.normals.push(dir.clone());
+        toB.normals.push(nrm.clone());
         toB.u.push(u);
         toB.angle.push(angle);
       }
@@ -923,10 +967,13 @@ export function surfaceCurve(
     o.axis.tangentAt(s, T);
     angularFrame(T, front, left, ef, el);
     const dir = ef.clone().multiplyScalar(Math.cos(angle)).addScaledVector(el, Math.sin(angle));
-    let r = traceOffset(body.plan, P, dir, radialAt(o.offset, s, t, angle), maxR, subset);
+    let r = traceOffset(body.plan, P, dir, 0, maxR, subset);
     if (o.maxRadius !== undefined) r = Math.min(r, radialAt(o.maxRadius, s, t, angle));
-    out.points.push(P.clone().addScaledVector(dir, r));
-    out.normals.push(dir);
+    const skin = P.clone().addScaledVector(dir, Math.max(r, 0.001));
+    const nrm = new THREE.Vector3();
+    if (!surfaceNormal(body.plan, skin, subset, nrm)) nrm.copy(dir);
+    out.points.push(skin.addScaledVector(nrm, radialAt(o.offset, s, t, angle)));
+    out.normals.push(nrm);
     out.u.push(t);
     out.angle.push(angle);
   }
