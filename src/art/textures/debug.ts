@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TexSet, textureStats } from './texture';
+import { TexSet, textureStats, tiled } from './texture';
 import { bandageWrap, cottonCanvas, quiltedFabric, ribbedKnit, satinFabric } from './fabric';
 import { skinDetail } from './skin';
 import { hairStrands } from './hair';
@@ -145,6 +145,143 @@ export function textureDebugSheet(opts: DebugSheetOptions = {}): THREE.Group {
   });
 
   return group;
+}
+
+/**
+ * The same library, **lit**, on a half-cylinder per generator.
+ *
+ * The flat sheet is for auditing the maps; this is for judging the material. A
+ * normal map that looks plausible as a purple picture can still be too deep,
+ * too noisy or pointing the wrong way, and the only way to know is to put a
+ * light on it and see what the highlight does as the surface turns away. A
+ * cylinder gives every incidence angle from face-on to grazing in one swatch,
+ * which is also exactly the range a fighter's arm covers.
+ */
+export function textureSwatchSheet(opts: DebugSheetOptions = {}): THREE.Group {
+  const entries = opts.entries ?? defaultDebugSets();
+  const tiling = opts.tiling ?? 2;
+  const q = opts.quad ?? 1;
+  const gap = opts.gap ?? 0.35;
+  const perRow = 5;
+
+  const group = new THREE.Group();
+  group.name = 'texture-swatch-sheet';
+  // Open half-cylinder, seam at the back: every angle from face-on to grazing.
+  const geo = new THREE.CylinderGeometry(q * 0.42, q * 0.42, q, 64, 1, true, -Math.PI / 2, Math.PI);
+  const labelGeo = new THREE.PlaneGeometry(q, q * 0.14);
+
+  entries.forEach((entry, i) => {
+    const set = tiled(entry.set, tiling, tiling);
+    const mat = new THREE.MeshStandardMaterial({
+      map: set.map,
+      normalMap: set.normalMap,
+      roughnessMap: set.roughnessMap ?? null,
+      roughness: 1,
+      metalness: 0,
+      side: THREE.FrontSide,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    const x = (i % perRow) * (q + gap);
+    const y = -Math.floor(i / perRow) * (q + gap * 2.2);
+    mesh.position.set(x, y, 0);
+    group.add(mesh);
+
+    const label = new THREE.Mesh(labelGeo, new THREE.MeshBasicMaterial({
+      map: labelTexture(entry.label),
+      transparent: true,
+      toneMapped: false,
+    }));
+    label.position.set(x, y - q * 0.62, q * 0.42);
+    group.add(label);
+  });
+
+  return group;
+}
+
+export interface MountOptions extends DebugSheetOptions {
+  width?: number;
+  height?: number;
+  /** Lit cylinders instead of flat maps. */
+  lit?: boolean;
+}
+
+export interface MountedSheet {
+  canvas: HTMLCanvasElement;
+  draw(): void;
+  dispose(): void;
+}
+
+/**
+ * Standalone harness, same shape as the post-chain preview: builds its own
+ * canvas so the screenshot tool can capture the texture library without the
+ * game's entry point being involved.
+ *
+ * ```js
+ * const t = await import('/src/art/textures/debug.ts');
+ * t.mountTextureSheet({ lit: true });
+ * ```
+ */
+export function mountTextureSheet(opts: MountOptions = {}): MountedSheet {
+  const width = opts.width ?? 1920;
+  const height = opts.height ?? 1080;
+
+  const canvas = document.createElement('canvas');
+  canvas.id = 'texture-sheet';
+  canvas.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;z-index:9999';
+  document.body.appendChild(canvas);
+
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(1);
+  renderer.setSize(width, height, false);
+  renderer.setClearColor(0x0a0a0c, 1);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  const scene = new THREE.Scene();
+  const sheet = opts.lit ? textureSwatchSheet(opts) : textureDebugSheet(opts);
+  scene.add(sheet);
+
+  if (opts.lit) {
+    // Deliberately the game's own rig in miniature: a warm key high on the
+    // left, a cool fill to stop the shadow side going black, and a rim from
+    // behind. Judging a material under a single headlamp flatters everything.
+    const key = new THREE.DirectionalLight(0xfff2e0, 3.1);
+    key.position.set(-2.2, 3.4, 3.6);
+    const fill = new THREE.DirectionalLight(0x8fb4ff, 0.85);
+    fill.position.set(3.4, 0.6, 2.2);
+    const rim = new THREE.DirectionalLight(0xffd9b0, 1.5);
+    rim.position.set(0.8, 1.4, -3.4);
+    scene.add(key, fill, rim, new THREE.AmbientLight(0x2a3244, 1.1));
+  }
+
+  // Frame the whole sheet orthographically, whatever it turned out to be.
+  const box = new THREE.Box3().setFromObject(sheet);
+  const size = new THREE.Vector3();
+  const centre = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(centre);
+  const aspect = width / height;
+  const half = Math.max(size.y * 0.5, (size.x * 0.5) / aspect) * 1.04;
+  const camera = new THREE.OrthographicCamera(-half * aspect, half * aspect, half, -half, 0.01, 100);
+  camera.position.set(centre.x, centre.y, 20);
+  camera.lookAt(centre.x, centre.y, 0);
+
+  return {
+    canvas,
+    draw() {
+      renderer.render(scene, camera);
+    },
+    dispose() {
+      sheet.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.geometry) m.geometry.dispose();
+        const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+        else mat?.dispose();
+      });
+      renderer.dispose();
+      canvas.remove();
+    },
+  };
 }
 
 /**

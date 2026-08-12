@@ -46,7 +46,11 @@ export interface HairOptions {
   clump?: number;
   /** Tone spread between strands, 0..1. Black hair still needs some. */
   variation?: number;
-  /** Plait segments down the tile. Braid only. */
+  /**
+   * Plait periods down the tile. Braid only — and note that each period shows
+   * **three** lobes, one per strand, so pick it so that `3 × segments` lobes
+   * spanning the tile leaves each lobe about as tall as the braid is wide.
+   */
   segments?: number;
   /** Twists per tile along a cord. Locs only. */
   twist?: number;
@@ -63,10 +67,13 @@ export function hairStrands(opts: HairOptions): TexSet {
     resolution: opts.resolution ?? 512,
     tileMetres: opts.tileMetres ?? (style === 'locs' ? 0.24 : 0.18),
     neutral: opts.neutral ?? false,
-    strands: Math.max(3, Math.round(opts.strands ?? (style === 'locs' ? 10 : style === 'braid' ? 60 : 110))),
-    clump: opts.clump ?? 0.55,
+    // Hair reads by its *locks*, not its filaments: a fighter's head is maybe
+    // 250 px tall in a fighting frame, so strands thinner than three or four
+    // texels only ever alias into static.
+    strands: Math.max(3, Math.round(opts.strands ?? (style === 'locs' ? 9 : style === 'braid' ? 40 : 64))),
+    clump: opts.clump ?? 0.7,
     variation: opts.variation ?? 0.5,
-    segments: Math.max(1, Math.round(opts.segments ?? 5)),
+    segments: Math.max(1, Math.round(opts.segments ?? 3)),
     twist: Math.max(1, Math.round(opts.twist ?? 6)),
     roughness: opts.roughness ?? 0.36,
   };
@@ -87,9 +94,12 @@ export function hairStrands(opts: HairOptions): TexSet {
 
     // Strand layers. Integer, mutually coprime counts: hair is not a comb, and
     // three offset layers crossing each other is what gives it depth.
+    // Two layers, not three. Each layer covers the whole width, so stacking
+    // three of them under a `max` fills in every gap between locks — and the
+    // gaps are the only thing that says "hair" rather than "grain".
     const layers = style === 'locs'
-      ? [o.strands, Math.max(3, Math.round(o.strands * 1.7))]
-      : [o.strands, Math.round(o.strands * 0.63) | 1, Math.round(o.strands * 1.41) | 1];
+      ? [o.strands, Math.max(3, Math.round(o.strands * 1.9))]
+      : [o.strands, Math.round(o.strands * 0.55) | 1];
 
     const strand = { h: 0, id: 0 };
     // Locks drift together — neighbouring hairs share a path, which is the
@@ -105,10 +115,12 @@ export function hairStrands(opts: HairOptions): TexSet {
       const f = su - Math.floor(su);
       const id = n.rand(idx, li, 5);
       // Strand thickness and depth vary; some hairs lie under their neighbours.
-      const width = 0.55 + 0.45 * id;
+      const width = 0.5 + 0.5 * id;
       const t = clamp01(Math.abs(f - 0.5) / (0.5 * width));
       const prof = Math.pow(1 - t * t, 0.65);
-      const depth = 0.42 + 0.58 * n.rand(idx, li + 7, 9);
+      // Some locks lie well behind others. A narrow depth range gives a wall of
+      // strands all at the same distance, which is what plastic doll hair is.
+      const depth = 0.28 + 0.72 * n.rand(idx, li + 7, 9);
       strand.h = prof * depth;
       strand.id = id;
     };
@@ -156,6 +168,7 @@ export function hairStrands(opts: HairOptions): TexSet {
       let h = 0;
       let id = 0;
       let dir = 0;
+      let twistBand = 1;
 
       if (style === 'braid') {
         braidAt(u, v);
@@ -166,8 +179,10 @@ export function hairStrands(opts: HairOptions): TexSet {
         // sheared. An integer shear keeps the sine periodic, which keeps the
         // whole map tiling.
         const groove = 0.5 + 0.5 * Math.sin(Math.PI * 2 * (u * o.strands + dir * v * o.segments * 3));
-        h *= 0.86 + 0.14 * groove;
-        h -= 0.10 * (1 - lobe.h);
+        h *= 0.80 + 0.20 * groove;
+        // Where two lobes pass each other the braid is at its deepest; that
+        // shadow line is what makes a plait legible at a distance.
+        h -= 0.22 * (1 - lobe.h);
       } else {
         for (let li = 0; li < layers.length; li++) {
           strandLayer(u, x, y, layers[li], li);
@@ -177,11 +192,13 @@ export function hairStrands(opts: HairOptions): TexSet {
           }
         }
         if (style === 'locs') {
-          // A loc is a twisted rope: bands spiral around the cord, and the cord
-          // itself is fuzzy where fibre escapes the twist.
+          // A loc is a twisted rope. The spiral is the read: bands wrap around
+          // each cord, one full turn across its width and `twist` turns along
+          // its length, and they need real depth or the loc is just a stripe.
           const band = 0.5 + 0.5 * Math.sin(Math.PI * 2 * (v * o.twist + u * o.strands));
-          h *= 0.82 + 0.18 * band;
-          h += 0.07 * n.value(u, v, fineFreq, 12) * h;
+          twistBand = band;
+          h *= 0.62 + 0.38 * band;
+          h += 0.09 * n.value(u, v, fineFreq, 12) * h;
         }
         dir = 1;
       }
@@ -195,13 +212,17 @@ export function hairStrands(opts: HairOptions): TexSet {
       // the tinted lift of a strand facing the light. Averaging them is what
       // produces the "solid helmet" look.
       const tint = (id - 0.5) * o.variation;
-      const shade = 0.62 + 0.58 * lit + tint * 0.22;
+      const shade = 0.48 + 0.85 * lit + tint * 0.26;
       out[0] *= shade;
       out[1] *= shade;
       out[2] *= shade;
-      const gap = 1 - clamp01(h * 1.7);
+      // The gap between locks is the darkest value on a character. Hair that
+      // never gets there reads as a moulded helmet.
+      const gap = 1 - clamp01(h * 1.9);
       for (let c = 0; c < 3; c++) {
-        out[c] = mix(out[c], darkC[c], gap * 0.7);
+        // The underside of each turn of a twist is in its own shadow — this is
+        // what separates a loc from a painted dowel.
+        out[c] = mix(out[c], darkC[c], clamp01(gap * 0.7 + (1 - twistBand) * 0.35));
         out[c] = mix(out[c], liftC[c], clamp01(tint) * 0.5 * lit);
         out[c] = mix(out[c], sheenC[c], smoothstep(0.75, 1, lit) * 0.22 * (0.4 + 0.6 * id));
       }
@@ -223,7 +244,10 @@ export function hairStrands(opts: HairOptions): TexSet {
 
     return {
       map: albedoTexture(color, 'hair-albedo'),
-      normalMap: normalTexture(height, { strength: style === 'locs' ? 1.4 : 0.9, name: 'hair-normal' }),
+      // A braid's lobes are centimetres across, so their slope per texel is
+      // tiny; without a much stronger scale the plait flattens under light and
+      // only the fine fibre survives.
+      normalMap: normalTexture(height, { strength: style === 'braid' ? 3.2 : style === 'locs' ? 1.6 : 0.9, name: 'hair-normal' }),
       roughnessMap: scalarTexture(rough, o.roughness - 0.12, o.roughness + 0.34, 'hair-rough'),
       aux: {
         flowMap: flowTexture(flowX, flowY, 'hair-flow'),

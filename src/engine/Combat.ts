@@ -267,6 +267,8 @@ export class Combat {
     arbitrate(oa, ob);
 
     // Nothing is written back until both directions are decided.
+    a.pushClaim = 0;
+    b.pushClaim = 0;
     this.apply(a, b, sa, sb, oa, stage);
     this.apply(b, a, sb, sa, ob, stage);
   }

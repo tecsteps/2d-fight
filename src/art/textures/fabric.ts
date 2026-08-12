@@ -90,7 +90,11 @@ export interface WeaveSpec extends Required<WeaveOptions> {}
 
 function resolveWeave(o: WeaveOptions): WeaveSpec {
   return {
-    threads: Math.max(4, Math.round(o.threads ?? 64)),
+    // Snapped to a multiple of four. The weave's over/under phase advances one
+    // step per thread and repeats every two (plain), four (twill) or four
+    // (basket, in pairs) — so a thread count that is not a multiple of four puts
+    // a half-cycle jump at the wrap and the tile seams along its own weave.
+    threads: Math.max(4, Math.round((o.threads ?? 64) / 4) * 4),
     kind: o.kind ?? 'plain',
     packing: o.packing ?? 1.12,
     drift: o.drift ?? 0.35,
@@ -370,9 +374,11 @@ export function quiltedFabric(opts: QuiltedFabricOptions): TexSet {
       seamGeom(u, v, x, y);
       const d = g.d;
 
-      // Loft: fast off the seam, flat across the panel.
-      const t = clamp01(d / (half * 0.85));
-      let h = o.puff * Math.pow(Math.sin(t * Math.PI * 0.5), 0.7);
+      // Loft: batting rises over the first third of the panel and then it is
+      // simply full. Letting the dome run the whole half-width is what turns a
+      // quilted vest into a row of sausages.
+      const t = clamp01(d / (half * 0.42));
+      let h = o.puff * smootherstep(0, 1, t);
 
       // Pinch. Narrow and deep — this is the line the eye actually reads.
       const pinch = Math.exp(-((d / seamW) * (d / seamW)) * 0.9);
@@ -413,17 +419,24 @@ export function quiltedFabric(opts: QuiltedFabricOptions): TexSet {
       height.set(x, y, h);
       seamMask.set(x, y, clamp01(pinch * 1.15));
 
-      const crown = clamp01((h - o.puff * 0.35) / (o.puff * 0.6));
+      // Shading gradient across the panel. Taken from the *distance to the
+      // seam* rather than from the height, because the loft plateaus early and
+      // a plateau paints as a flat slab of colour — while the light that
+      // reaches the middle of a quilted panel keeps rising all the way across.
+      const crown = smoothstep(0, half * 0.95, d);
       // Dye lot per panel: bought as a roll, cut and sewn, and it shows.
       const lot = (n.rand(g.panel & 255, 3, 71) - 0.5) * 0.045;
-      const shade = 0.90 + 0.20 * crown + lot;
+      const shade = 0.84 + 0.26 * crown + lot;
       out[0] *= shade;
       out[1] *= shade;
       out[2] *= shade;
       for (let c = 0; c < 3; c++) {
-        out[c] = mix(out[c], seamCol[c], clamp01(pinch * 0.85));
-        out[c] = mix(out[c], crownCol[c], crown * 0.35);
-        out[c] = mix(out[c], stitchCol[c], stitchM * 0.9);
+        // The seam's darkness belongs in the *normal*, where the light decides
+        // how deep it looks. Painting it into the albedo as well gives every
+        // channel a black outline and the vest reads as inflatable.
+        out[c] = mix(out[c], seamCol[c], clamp01(pinch * 0.45));
+        out[c] = mix(out[c], crownCol[c], crown * 0.28);
+        out[c] = mix(out[c], stitchCol[c], stitchM * 0.85);
       }
 
       // The shell is glossiest where it is stretched taut over the loft and
@@ -491,10 +504,13 @@ export function satinFabric(opts: SatinFabricOptions): TexSet {
     // Fine floats: isotropic noise smeared along the yarn. Two scales, because
     // silk shows both individual filaments and the wider bands where a group of
     // them lies the same way.
+    // The smear has to be long — a hundred texels, not ten. Satin's identity is
+    // that its highlight is *stretched*; a mild blur just gives you clouds, and
+    // clouds on black shorts read as smudges.
     const fine = Field.from(size, (u, v) => n.value(u, v, Math.max(32, Math.round(size / 2)), 4));
-    fine.blurAxis(Math.max(2, size / 90), along, 2).normalize(-1, 1);
-    const broad = Field.from(size, (u, v) => n.fbm(u, v, { freq: 10, octaves: 3, kind: 'perlin', layer: 6 }));
-    broad.blurAxis(Math.max(4, size / 26), along, 2).normalize(-1, 1);
+    fine.blurAxis(Math.max(3, size / 24), along, 2).normalize(-1, 1);
+    const broad = Field.from(size, (u, v) => n.value(u, v, Math.max(16, Math.round(size / 12)), 6));
+    broad.blurAxis(Math.max(8, size / 5), along, 2).normalize(-1, 1);
 
     // Pressed folds: long and soft, running across the floats, which is how a
     // pair of shorts comes out of the packet.
@@ -527,7 +543,7 @@ export function satinFabric(opts: SatinFabricOptions): TexSet {
 
       // Satin's albedo swings far more than cotton's: the same dye looks like
       // two colours depending on whether the floats face you.
-      const v0 = 1 + b * 0.16 + f * 0.05 - cr * 0.10;
+      const v0 = 1 + b * 0.13 + f * 0.07 - cr * 0.10;
       out[0] *= v0;
       out[1] *= v0;
       out[2] *= v0;
@@ -628,9 +644,10 @@ export function ribbedKnit(opts: RibbedKnitOptions): TexSet {
       const ribGauge = 1 + (n.rand(iu, 0, 5) - 0.5) * 0.16;
 
       // Loops: each course pinches the wale slightly, and the legs of the loop
-      // cross it as a shallow chevron.
-      const loop = 1 - 0.20 * Math.pow(Math.abs(Math.sin(Math.PI * pv)), 3);
-      const chevron = 0.075 * Math.cos(TAU * (pv + 0.5 * tri(pu)));
+      // cross it as a shallow chevron. Both stay small — pushed any harder the
+      // courses read as a second set of ribs and the knit turns into mesh.
+      const loop = 1 - 0.12 * Math.pow(Math.abs(Math.sin(Math.PI * pv)), 3);
+      const chevron = 0.04 * Math.cos(TAU * (pv + 0.5 * tri(pu)));
 
       const fuzz = o.fuzz * 0.35 * Math.max(0, n.value(u, v, microFreq, 11));
       const h = wale * ribGauge * loop + chevron + fuzz * 0.25;
@@ -765,7 +782,7 @@ export function bandageWrap(opts: BandageWrapOptions): TexSet {
       const tension = 1 + tensionF.get(x, y) * 0.22;
 
       const w = weaveAt(n, t, s, weave);
-      let h = (bulge * tension + lip - groove) + w.height * 0.16;
+      let h = (bulge * tension + lip - groove) + w.height * 0.30;
 
       // Fray: fibres pulled out of the edge, bridging the groove.
       const wisp = Math.max(0, n.value(t, s, wispFreq, 15)) * Math.max(0, n.value(t, s, Math.max(3, Math.round(wispFreq / 2)), 17));
@@ -775,7 +792,9 @@ export function bandageWrap(opts: BandageWrapOptions): TexSet {
       height.set(x, y, h);
       edgeMask.set(x, y, clamp01(groove * 1.2));
 
-      const shade = 0.86 + 0.26 * clamp01(h) + (tension - 1) * 0.35;
+      // Gauze is nearly white and takes light on the weave, not on the tension:
+      // keep the broad field out of the albedo or the wrap looks tie-dyed.
+      const shade = 0.84 + 0.20 * clamp01(h) + w.height * 0.10 + (tension - 1) * 0.12;
       out[0] *= shade;
       out[1] *= shade;
       out[2] *= shade;

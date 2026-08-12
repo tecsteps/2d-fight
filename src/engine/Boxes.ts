@@ -157,11 +157,6 @@ class BoxDebugRecorder {
     this.boxes.push({ kind, owner, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 });
   }
 
-  addLocal(kind: BoxKind, owner: number, b: BoxTuple, x: number, y: number, facing: number): void {
-    if (!this.enabled) return;
-    this.add(kind, owner, toWorld(b, x, y, facing, aabb()));
-  }
-
   setEnabled(on: boolean): void {
     this.enabled = on;
     if (!on) this.boxes.length = 0;

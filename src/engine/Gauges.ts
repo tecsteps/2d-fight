@@ -193,5 +193,3 @@ export class Gauges {
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
-
-export { HD_FRAMES, STOCK };

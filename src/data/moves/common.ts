@@ -1,7 +1,6 @@
 import { Btn, type MotionSpec } from '../../core/Input';
 import type { BoxTuple, FrameBoxes } from '../../engine/Boxes';
 import {
-  AttackTier,
   GuardKind,
   Invuln,
   MoveType,
@@ -682,5 +681,3 @@ export function normalCommands(): CommandDef[] {
     { name: 'st.B', buttons: Btn.B, state: S.ST_B, priority: 10, require: { stance: 'ground' } },
   ];
 }
-
-export { PUSH_AIR, PUSH_CROUCH, PUSH_STAND, AttackTier };

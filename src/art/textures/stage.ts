@@ -136,7 +136,14 @@ export function concrete(opts: ConcreteOptions = {}): TexSet {
 
     const undulation = Field.lowRes(size, 128, (u, v) => n.fbm(u, v, { freq: 5, octaves: 4, kind: 'simplex', layer: 1 }));
     const exposureF = Field.lowRes(size, 64, (u, v) => smoothstep(0.45, 0.8, clamp01(0.5 + 0.6 * n.fbm(u, v, { freq: 4, octaves: 3, kind: 'simplex', layer: 3 }))));
-    const crackF = Field.lowRes(size, size >> 1, (u, v) => clamp01(clamp01(n.fbm(u, v, { freq: 6, octaves: 4, ridged: true, kind: 'perlin', layer: 5 }) * 1.15 - 0.80) * 5));
+    // Concrete cracks are *rare and long*. A ridged fBm thresholded gently
+    // gives a dense worm network that reads as camouflage, so the threshold sits
+    // high enough that only the top few percent of the field survives, and the
+    // survivors are then squared to keep them thin.
+    const crackF = Field.lowRes(size, size >> 1, (u, v) => {
+      const r = clamp01(n.fbm(u, v, { freq: 5, octaves: 4, ridged: true, kind: 'perlin', layer: 5 }) * 1.1 - 0.90) * 9;
+      return clamp01(r * r);
+    });
     const formWob = o.formLines ? Field.lowRes(size, 64, (u, v) => n.fbm(u, v, { freq: 2, octaves: 2, layer: 6 })) : null;
     const toneF = Field.lowRes(size, 64, (u, v) => n.fbm(u, v, { freq: 2, octaves: 2, kind: 'simplex', layer: 8 }));
     const salts = Field.lowRes(size, 96, (u, v) => clamp01(n.fbm(u, v, { freq: 7, octaves: 3, kind: 'simplex', layer: 9 }) * 1.2 - 0.55));
@@ -257,9 +264,9 @@ export function wornWood(opts: WornWoodOptions = {}): TexSet {
     const height = new Field(size);
     const rough = new Field(size);
     const color = new ColorField(size, o.color);
-    const darkGrain = shiftedSrgb(o.color, -0.12, 0.05, -0.012);
+    const darkGrain = shiftedSrgb(o.color, -0.19, 0.07, -0.014);
     const bleached = shiftedSrgb(o.color, 0.13, -0.1, 0.008);
-    const gapC = shiftedSrgb(o.color, -0.24, 0.02, -0.02);
+    const gapC = shiftedSrgb(o.color, -0.26, 0.02, -0.02);
 
     const swirlF = Field.lowRes(size, 128, (u, v) => n.fbm(u, v, { freq: 4, octaves: 3, kind: 'simplex', layer: 11 }));
     const trafficF = Field.lowRes(size, 64, (u, v) => clamp01(0.5 + 0.6 * n.fbm(u, v, { freq: 3, octaves: 3, kind: 'simplex', layer: 15 })));
@@ -283,8 +290,14 @@ export function wornWood(opts: WornWoodOptions = {}): TexSet {
       const edgeB = Math.min(fb, 1 - fb);
       const edgeA = Math.min(fa, 1 - fa);
       const gap = smoothstep(0.030, 0.006, edgeB) + 0.7 * smoothstep(0.012, 0.003, edgeA);
+      // Boards are chamfered by a hundred years of feet, so the light catches
+      // the edge before the joint drops away. Without it the joints are inked
+      // lines on a flat plane.
+      const chamfer = smoothstep(0.075, 0.030, edgeB);
 
-      // Rings: warped across the board, bunched around knots.
+      // Rings: warped across the board, bunched around knots. Late wood is the
+      // narrow dark line; the sharper its edge, the less the floor looks
+      // airbrushed.
       const knotW = n.worley(a * 2, b * 2, Math.max(2, Math.round(o.segments * 2)), { jitter: 1, layer: 10 + (board & 15) });
       const hasKnot = smoothstep(1 - o.knots * 0.6, 1, knotW.id);
       const knot = hasKnot * Math.exp(-((knotW.f1 / 0.22) ** 2) * 2.2);
@@ -294,19 +307,20 @@ export function wornWood(opts: WornWoodOptions = {}): TexSet {
       // Early wood is wide and pale, late wood a narrow dark line: the ring is
       // asymmetric, and making it a symmetric sine is why procedural wood so
       // often looks like a barcode.
-      const ring = Math.pow(smoothstep(0.0, 0.22, ringPhase) * (1 - smoothstep(0.62, 0.95, ringPhase)), 0.7);
+      const ring = Math.pow(smoothstep(0.02, 0.30, ringPhase) * (1 - smoothstep(0.74, 0.94, ringPhase)), 0.7);
       const grain = 1 - ring;
 
-      // Fibre along the board, plus cupping across it.
-      const fibre = 0.5 + 0.5 * n.value(a * 3, b * 12, Math.max(16, Math.round(size / 8)), 14);
+      // Fibre: slow along the board, fast across it, and shallow — planed wood
+      // has a grain you can feel with a fingernail, not with your palm.
+      const fibre = 0.5 + 0.5 * n.value(a * 2, b * 8, Math.max(12, Math.round(size / 14)), 14);
       const cup = -0.06 * Math.cos(Math.PI * 2 * fb);
 
       const worn = clamp01((trafficF.get(x, y) - 0.45) * 2) * o.traffic;
 
-      let h = 0.5 - grain * 0.16 - knot * 0.12 + cup + fibre * 0.05;
+      let h = 0.5 - grain * 0.16 - knot * 0.12 + cup + fibre * 0.03;
       // Traffic sands the raised grain back down.
       h += worn * grain * 0.10;
-      h -= gap * 0.55;
+      h -= chamfer * 0.07 + gap * 0.55;
       h += 0.02 * n.fbm(u, v, { freq: Math.round(size / 4), octaves: 2, kind: 'value', layer: 16 });
       height.set(x, y, h);
 
@@ -316,7 +330,7 @@ export function wornWood(opts: WornWoodOptions = {}): TexSet {
       out[1] *= tone;
       out[2] *= tone;
       for (let c = 0; c < 3; c++) {
-        out[c] = mix(out[c], darkGrain[c], grain * 0.55 + knot * 0.5);
+        out[c] = mix(out[c], darkGrain[c], clamp01(grain * 0.72 + knot * 0.5));
         out[c] = mix(out[c], bleached[c], worn * 0.45);
         out[c] = mix(out[c], gapC[c], clamp01(gap));
       }
@@ -377,7 +391,7 @@ export function paintedMetal(opts: PaintedMetalOptions = {}): TexSet {
     neutral: opts.neutral ?? false,
     wear: opts.wear ?? 0.55,
     grimeColor: hexOf(opts.grimeColor ?? 0x2b2622),
-    metalColor: hexOf(opts.metalColor ?? 0x8d8f91),
+    metalColor: hexOf(opts.metalColor ?? 0x6b6d70),
     rustColor: hexOf(opts.rustColor ?? 0x7a4522),
     chipping: opts.chipping ?? 0.5,
     rust: opts.rust ?? 0.6,
@@ -418,15 +432,22 @@ export function paintedMetal(opts: PaintedMetalOptions = {}): TexSet {
       const br = brushed.get(x, y);
       const scratch = clamp01(scratches.get(x, y));
 
+      // Chips are *patches*, several centimetres across, with a hard edge where
+      // the film lifted. Small scattered dots read as noise, not as failure.
+      // Chips are patches a few centimetres across with a hard edge where the
+      // film lifted: scattered dots read as noise, and continent-sized blobs
+      // read as camouflage. About a quarter of the cells fail.
       const cw = n.worley(u, v, Math.max(6, Math.round(size / 26)), { jitter: 1, aspect: 0.85, layer: 23 });
-      const patchGate = smoothstep(0.62, 0.88, cw.id);
-      const patch = patchGate * smoothstep(0.42, 0.18, cw.f1);
-      const chip = clamp01((patch + scratch * 0.8) * o.chipping * 1.4);
+      const patchGate = smoothstep(0.64, 0.74, cw.id);
+      const patch = patchGate * smoothstep(0.52, 0.30, cw.f1);
+      const chip = clamp01(patch * 1.6 + scratch * 0.55) * o.chipping;
       chipField.set(x, y, chip);
 
-      // The paint film is thin but real: a step down into the bare metal.
+      // The paint film is thin but real: a step down into the bare metal, and
+      // the step is what makes a chip read as a layer lifting rather than as a
+      // stain painted on.
       let h = 0.5 + br * 0.05;
-      h += (1 - chip) * 0.06;
+      h += (1 - chip) * 0.1;
       // Rust lifts and flakes, so it stands slightly proud of the steel.
       const rustField = rustF.get(x, y);
       const bleed = clamp01(chip * 1.2 + Math.max(0, rustField - 0.62) * 1.5 * o.rust);
@@ -437,9 +458,10 @@ export function paintedMetal(opts: PaintedMetalOptions = {}): TexSet {
         // Rivet rows along the panel edges — the detail that gives sheet metal
         // its scale. Distances are measured in rivet-pitch units so the head
         // stays round whatever the tile resolution is.
-        const rv = stripeDistance(v, 0.5);
-        const rd = Math.hypot(stripeDistance(u, 1 / 16) * 16, rv * 4);
-        h += smoothstep(0.5, 0.1, rd) * 0.16;
+        // Both distances in units of the rivet pitch, or the head comes out as
+        // a band across the panel instead of a dome.
+        const rd = Math.hypot(stripeDistance(u, 1 / 16), stripeDistance(v, 0.5)) * 16;
+        h += smoothstep(0.5, 0.12, rd) * 0.16;
       }
       // Panel dents.
       h += 0.05 * dents.get(x, y);
@@ -453,8 +475,9 @@ export function paintedMetal(opts: PaintedMetalOptions = {}): TexSet {
         // Sun-bleached film on top, deeper colour where it is protected.
         out[c] = mix(out[c], paintPale[c], bleachF.get(x, y) * 0.35 * o.wear);
         out[c] = mix(out[c], paintDeep[c], clamp01(1 - h) * 0.25);
-        out[c] = mix(out[c], metal[c], clamp01(chip * 1.3) * (1 - rust * 0.8));
-        out[c] = mix(out[c], rustC[c], rust * 0.85);
+        out[c] = mix(out[c], metal[c], clamp01(chip * 1.3) * (1 - rust));
+        // Bare steel does not stay bare. Every chip is rusting from its edge in.
+        out[c] = mix(out[c], rustC[c], clamp01(rust * 1.2));
         out[c] = mix(out[c], rustDark[c], clamp01(rust - 0.6) * 0.8);
       }
 
@@ -755,14 +778,16 @@ export function asphalt(opts: AsphaltOptions = {}): TexSet {
       const st = n.worley(u, v, o.aggregate, { jitter: 1, aspect: 0.92, layer: 61 });
       const r = 0.24 + 0.2 * st.id;
       const stoneId = st.id;
-      const stone = smoothstep(r, r * 0.4, st.f1) * smoothstep(0.35, 0.7, exposureF.get(x, y));
+      const stone = smoothstep(r, r * 0.4, st.f1) * smoothstep(0.28, 0.6, exposureF.get(x, y));
 
       const grit = n.fbm(u, v, { freq: Math.round(size / 3), octaves: 2, kind: 'value', layer: 63 });
 
       // Cracks follow a cell network — tarmac fails along polygon boundaries,
-      // not along fractal lines.
-      const cellEdge = n.worleyEdge(u, v, 7, { jitter: 0.9, layer: 64 });
-      const crack = clamp01((smoothstep(0.86, 0.99, cellEdge) + crackF.get(x, y) * 0.5) * o.cracks);
+      // not along fractal lines. Only the boundaries that a second field opens
+      // up actually crack, so the surface is not a uniform crazing.
+      const cell = n.worley(u, v, 7, { jitter: 0.9, layer: 64 });
+      const opened = smoothstep(0.35, 0.75, exposureF.get(x, y));
+      const crack = clamp01((smoothstep(0.9, 1, 1 - Math.min(1, cell.f2 - cell.f1)) * opened + crackF.get(x, y) * 0.35) * o.cracks);
 
       const patchMask = patchF.get(x, y) * o.patches;
       const polish = polishF.get(x, y) * o.polish;

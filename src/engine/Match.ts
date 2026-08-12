@@ -133,12 +133,14 @@ export class Match implements FightWorld {
     this.beginRound(true);
   }
 
+  // Clamped, so that a team which has run out of characters still reports its
+  // last one. The HUD and the win screen keep reading these after the set ends.
   get p1(): Fighter {
-    return this.roster[0][this.activeIdx[0]];
+    return this.roster[0][Math.min(this.activeIdx[0], this.roster[0].length - 1)];
   }
 
   get p2(): Fighter {
-    return this.roster[1][this.activeIdx[1]];
+    return this.roster[1][Math.min(this.activeIdx[1], this.roster[1].length - 1)];
   }
 
   get fighters(): [Fighter, Fighter] {
@@ -157,7 +159,7 @@ export class Match implements FightWorld {
 
   /** Characters left standing on each team, including the active one. */
   remaining(team: number): number {
-    return this.roster[team].length - this.activeIdx[team];
+    return Math.max(0, this.roster[team].length - this.activeIdx[team]);
   }
 
   /* ---------------------------------------------------------------- *
@@ -474,6 +476,7 @@ function defOf(id: string): FighterDef {
 
 function survivorHealth(f: Fighter, lastWinner: number): number {
   if (f.team !== lastWinner) return -1; // fresh character, or the loser's next
-  const healed = f.health + f.maxHealth * ROUND_HEAL_FRACTION;
-  return Math.min(f.maxHealth, healed);
+  // Health stays integral: the HUD draws it, the state hash includes it, and a
+  // fractional hit point is a rounding bug waiting to desync a replay.
+  return Math.min(f.maxHealth, Math.round(f.health + f.maxHealth * ROUND_HEAL_FRACTION));
 }

@@ -90,5 +90,5 @@ export type {
 export { fighterTextures } from './suite';
 export type { FighterTextures } from './suite';
 
-export { defaultDebugSets, textureDebugSheet, textureSheetReport } from './debug';
-export type { DebugSheetEntry, DebugSheetOptions } from './debug';
+export { defaultDebugSets, mountTextureSheet, textureDebugSheet, textureSheetReport, textureSwatchSheet } from './debug';
+export type { DebugSheetEntry, DebugSheetOptions, MountedSheet, MountOptions } from './debug';

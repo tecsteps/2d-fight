@@ -114,7 +114,9 @@ export function skinDetail(opts: SkinDetailOptions): TexSet {
       const coarse = n.worleyEdge(u, v, netFreq, { jitter: 0.85, aspect: 0.72, layer: 1 });
       const fine = n.worleyEdge(u, v, fineFreq, { jitter: 0.95, aspect: 1.25, layer: 2 });
       // Furrows cut down; the lozenges between them dome up very slightly.
-      const network = Math.pow(coarse, 2.2) * 0.75 + Math.pow(fine, 2.6) * 0.35;
+      // Integer powers, because this is the innermost expression in the most
+      // expensive generator and `Math.pow` is not free.
+      const network = coarse * coarse * 0.75 + fine * fine * fine * 0.35;
 
       const pw = n.worley(u, v, poreFreq, { jitter: 1, layer: 3 });
       // Only about half the cells carry a visible pore, and they vary in size.
@@ -135,7 +137,7 @@ export function skinDetail(opts: SkinDetailOptions): TexSet {
         out[c] = mix(out[c], sssC[c], o.subdermal * 0.22 * warm);
         out[c] = mix(out[c], coolC[c], o.subdermal * 0.16 * cool);
       }
-      const tone = 1 + capillary * 0.028 - network * 0.10 - pore * 0.16;
+      const tone = 1 + capillary * 0.028 - network * 0.15 - pore * 0.2;
       out[0] *= tone;
       out[1] *= tone;
       out[2] *= tone;
@@ -163,7 +165,7 @@ export function skinDetail(opts: SkinDetailOptions): TexSet {
       map: albedoTexture(color, 'skin-albedo'),
       // Deliberately shallow. Skin relief should only appear near the
       // terminator; if it reads across the lit side the fighter looks reptilian.
-      normalMap: normalTexture(height, { strength: 0.42, step: 1, name: 'skin-normal' }),
+      normalMap: normalTexture(height, { strength: 0.85, step: 1, name: 'skin-normal' }),
       roughnessMap: scalarTexture(rough, o.roughness - 0.28, Math.min(1, o.roughness + 0.22), 'skin-rough'),
       aux: { sheenMask: scalarTexture(sheen, 0, 1, 'skin-sheen') },
       size,

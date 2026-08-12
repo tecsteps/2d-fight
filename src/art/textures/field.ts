@@ -63,6 +63,26 @@ export class Field {
     return Field.from(l, fn).upsampleTo(size);
   }
 
+  /** Box-averaged resample to a smaller grid. Wrapping is implicit in the blocks. */
+  downsampleBy(factor: number): Field {
+    const f = Math.max(1, Math.round(factor));
+    if (f === 1 || this.size % f !== 0) return this;
+    const n = this.size / f;
+    const dst = new Field(n);
+    const inv = 1 / (f * f);
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        let sum = 0;
+        for (let dy = 0; dy < f; dy++) {
+          const row = (y * f + dy) * this.size + x * f;
+          for (let dx = 0; dx < f; dx++) sum += this.data[row + dx];
+        }
+        dst.data[y * n + x] = sum * inv;
+      }
+    }
+    return dst;
+  }
+
   /** Quintic wrapped resample to a larger grid. */
   upsampleTo(size: number): Field {
     if (size <= this.size) return this;

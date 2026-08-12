@@ -199,11 +199,18 @@ export function clampSeparation(a: Fighter, b: Fighter, stage: StageBounds): voi
 /**
  * Knockback from a connected attack.
  *
- * `defenderVX` and `attackerVX` are magnitudes; direction comes from the
+ * `defenderVX` and `attackerPush` are magnitudes; direction comes from the
  * attacker's facing. When the defender's back is on the wall the push they
  * cannot take is handed to the attacker instead, so hitting a cornered opponent
  * walks *you* backwards — the corner-push rule every KOF blockstring is built
  * around.
+ *
+ * Both fighters can be on the receiving end of a knockback in the same tick,
+ * because a trade is two hits landing at once. Pushback is therefore *claimed*
+ * rather than assigned: the largest shove a fighter receives this tick wins,
+ * whichever direction it was resolved in. Without that, whichever hit happened
+ * to be applied second would decide, and a mirror trade would send one fighter
+ * flying while the other barely moved.
  */
 export function applyKnockback(
   attacker: Fighter,
@@ -214,18 +221,27 @@ export function applyKnockback(
   stage: StageBounds,
 ): void {
   const dir = attacker.facing;
-  defender.vx = dir * defenderVX;
-  if (defenderVY !== 0) defender.vy = defenderVY;
-
   let selfPush = attackerPush;
+  let defPush = defenderVX;
+
   const limit = stage.halfWidth - defender.halfWidth - 0.02;
   const pinned = dir > 0 ? defender.x >= limit : defender.x <= -limit;
   if (pinned) {
     // Whatever the wall refuses to absorb comes back through the attacker.
     selfPush += Math.abs(defenderVX) * CORNER_PUSH_TRANSFER;
-    defender.vx = 0;
+    defPush = 0;
   }
-  attacker.vx = -dir * selfPush;
+
+  claimPush(defender, dir, defPush, defenderVY);
+  claimPush(attacker, -dir, selfPush, 0);
+}
+
+/** Largest shove this tick wins, so simultaneous hits resolve symmetrically. */
+function claimPush(f: Fighter, sign: number, mag: number, vy: number): void {
+  if (mag < f.pushClaim) return;
+  f.pushClaim = mag;
+  f.vx = sign * mag;
+  if (vy !== 0) f.vy = vy;
 }
 
 /** Instantaneous separation used by throw breaks and clashes. */

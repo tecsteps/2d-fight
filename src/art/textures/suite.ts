@@ -66,18 +66,20 @@ export function fighterTextures(def: FighterDef): FighterTextures {
 
   switch (def.id) {
     case 'kai':
-      hair = hairStrands({ color: p.hair, sheenColor: p.hairSheen, style: 'strand', seed, strands: 120 });
+      hair = hairStrands({ color: p.hair, sheenColor: p.hairSheen, style: 'strand', seed, strands: 72, clump: 0.75 });
       // A gi is heavy twill; the diagonal is what makes it read as a gi and not
       // as a shirt.
       garments.gi = cottonCanvas({ color: p.primary, seed, kind: 'twill', threads: 56, tileMetres: 0.25, roughness: 0.88 });
       garments.pants = cottonCanvas({ color: p.secondary, seed: seed + 1, kind: 'twill', threads: 64, tileMetres: 0.3, fuzz: 0.35 });
-      garments.obi = cottonCanvas({ color: p.accent, seed: seed + 2, kind: 'basket', threads: 34, tileMetres: 0.18, relief: 1.3, mottle: 0.7 });
-      garments.headband = cottonCanvas({ color: p.accent, seed: seed + 4, kind: 'plain', threads: 60, tileMetres: 0.12 });
+      // Obi and headband are cut from the same bolt, so they are the same
+      // texture — one upload, and they will read as a matched set on screen.
+      garments.obi = cottonCanvas({ color: p.accent, seed: seed + 2, kind: 'basket', threads: 36, tileMetres: 0.18, relief: 1.3, mottle: 0.7 });
+      garments.headband = garments.obi;
       boots = leather({ color: p.boots, seed, creases: 0.7, wear: 0.4, roughness: 0.55 });
       break;
 
     case 'mali':
-      hair = hairStrands({ color: p.hair, sheenColor: p.hairSheen, style: 'braid', seed, segments: 5, strands: 60 });
+      hair = hairStrands({ color: p.hair, sheenColor: p.hairSheen, style: 'braid', seed, segments: 3, strands: 44 });
       // Compression knit: fine, smooth, and shinier than any woven cotton.
       garments.bra = cottonCanvas({ color: p.primary, seed, kind: 'plain', threads: 110, tileMetres: 0.14, fuzz: 0.12, roughness: 0.6, relief: 0.6 });
       garments.shorts = satinFabric({ color: p.secondary, seed, direction: 'u', roughness: 0.2, creases: 0.4 });
@@ -94,7 +96,7 @@ export function fighterTextures(def: FighterDef): FighterTextures {
       break;
 
     default:
-      hair = hairStrands({ color: p.hair, sheenColor: p.hairSheen, style: 'braid', seed, segments: 7, strands: 46, variation: 0.65 });
+      hair = hairStrands({ color: p.hair, sheenColor: p.hairSheen, style: 'braid', seed, segments: 4, strands: 38, variation: 0.65 });
       garments.vest = quiltedFabric({
         color: p.primary,
         seed,

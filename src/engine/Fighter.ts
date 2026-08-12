@@ -27,7 +27,6 @@ import {
 } from './Boxes';
 import { Gauges, type GaugeState } from './Gauges';
 import {
-  clampToStage,
   gravityFor,
   integrate,
   jumpVelocityFor,
@@ -169,6 +168,12 @@ export class Fighter {
 
   /** Drive/HD cancels used, for the HUD and for post-match stats. */
   driveCancels = 0;
+
+  /**
+   * Largest pushback magnitude claimed this tick. Reset by `Combat` before the
+   * apply phase; never read across ticks, so it stays out of the snapshot.
+   */
+  pushClaim = 0;
 
   /** Slot of the fighter this one is glued to during a throw, or -1. */
   boundTo = -1;
@@ -533,7 +538,9 @@ export class Fighter {
     this.takeDamage(t.damage);
     this.registerComboHit(t.id);
     this.sm.changeState(t.victimState);
-    this.bindTo(attacker, 0.5, 0, 16);
+    // Held slightly longer than the attacker's release frame, so the throw
+    // animation is what lets go rather than the timer running out.
+    this.bindTo(attacker, 0.5, 0, 20);
   }
 
   /** Called on wake-up and on landing, so nobody can be grabbed out of nothing. */
@@ -727,5 +734,3 @@ export class Fighter {
 function q(v: number): number {
   return Math.round(v * 100000);
 }
-
-export { clampToStage, KNOCKDOWN_FRAMES };

@@ -110,7 +110,12 @@ export const COMBO_DROP_FRAMES = 4;
  * Guard
  * ---------------------------------------------------------------- */
 
-export const GUARD_MAX = 1000;
+/**
+ * Guard gauge. Sized so that roughly eight blocked heavy hits or specials break
+ * a guard that never gets a moment to breathe — enough that turtling through a
+ * whole round is not a plan, not so little that blocking stops being an answer.
+ */
+export const GUARD_MAX = 720;
 /** Guard gauge regained per frame once the pressure stops. */
 export const GUARD_REGEN = 2.2;
 /** Frames after the last blocked hit before regeneration starts. */

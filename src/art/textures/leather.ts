@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ColorField, Field, shiftedSrgb, srgb } from './field';
+import { ColorField, Field, shiftedSrgb } from './field';
 import { clamp01, mix, noise, smoothstep } from './noise';
 import { albedoTexture, cached, normalTexture, scalarTexture, texSize, TexSet } from './texture';
 
@@ -90,11 +90,13 @@ export function leather(opts: LeatherOptions): TexSet {
       // Grain gets finer and shallower where the hide is pulled over a crease.
       const tight = 1 - crease * 0.5;
       const cell = n.worley(u, v, o.grain, { jitter: 0.9, aspect: 0.8, layer: 1 });
-      const edge = 1 - Math.min(1, (cell.f2 - cell.f1) * 1.6);
+      // Wide furrows, not hairlines: hide grain is a visible valley between
+      // pebbles, and squeezing it to a one-texel line loses it in the mips.
+      const edge = 1 - Math.min(1, (cell.f2 - cell.f1) * 0.9);
       const pebble = smoothstep(0, 0.6, cell.f1) * 0.35;
       const fine = n.worleyEdge(u, v, o.grain * 2, { jitter: 1, aspect: 1.3, layer: 2 });
 
-      const grain = (Math.pow(edge, 2.0) * 0.8 + Math.pow(fine, 3) * 0.3) * tight;
+      const grain = (edge * edge * 0.85 + fine * fine * fine * 0.3) * tight;
       let h = pebble - grain * o.depth;
       h -= crease * 0.75;
       // Broad slack in the panel — leather is never flat.
@@ -110,13 +112,13 @@ export function leather(opts: LeatherOptions): TexSet {
       // Scuffs: shallow, bright, short scratches where the finish has gone.
       const scuff = clamp01(scuffF.get(x, y) * scatter) * o.wear;
 
-      const shade = 0.86 + 0.28 * clamp01(0.5 + h) - grain * 0.18;
+      const shade = 0.84 + 0.34 * clamp01(0.5 + h) - grain * 0.26;
       out[0] *= shade;
       out[1] *= shade;
       out[2] *= shade;
       for (let c = 0; c < 3; c++) {
         // Polish collects in the grain and along the crease bottoms.
-        out[c] = mix(out[c], deep[c], clamp01(grain * 0.8 + crease * 0.5) * 0.6);
+        out[c] = mix(out[c], deep[c], clamp01(grain * 1.1 + crease * 0.9) * 0.75);
         out[c] = mix(out[c], burnish[c], worn * 0.5);
         out[c] = mix(out[c], scuffC[c], scuff * 0.35);
       }

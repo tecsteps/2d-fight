@@ -24,7 +24,7 @@ export interface TexSet {
    * strand ids, anisotropy flow. Named per generator and documented there.
    */
   readonly aux?: Readonly<Record<string, THREE.Texture>>;
-  /** Edge length in texels. */
+  /** Edge length of the albedo and normal in texels; scalar maps are half this. */
   readonly size: number;
   /**
    * Physical size of one tile in metres, so a caller can set UV repeat from a
@@ -179,8 +179,18 @@ export function normalTexture(height: Field, opts: NormalOptions = {}): THREE.Da
   return finish(new THREE.DataTexture(data, n, n, THREE.RGBAFormat, THREE.UnsignedByteType), THREE.NoColorSpace, opts.name ?? 'normal');
 }
 
-/** Grey data map. Roughness, masks, anything the shader reads as a scalar. */
-export function scalarTexture(field: Field, lo = 0, hi = 1, name = 'scalar'): THREE.DataTexture {
+/**
+ * Grey data map: roughness, and every mask a shader reads as a scalar.
+ *
+ * Emitted at **half** the source resolution above 256. A scalar map's job is to
+ * modulate a lighting term, and by the time the eye could resolve the finest
+ * detail in a roughness map the surface is already several mip levels down. The
+ * albedo and normal keep full resolution because they carry the silhouette of
+ * the detail; halving these instead is a third of the library's VRAM back for a
+ * difference nobody has ever spotted in motion.
+ */
+export function scalarTexture(source: Field, lo = 0, hi = 1, name = 'scalar'): THREE.DataTexture {
+  const field = source.size > 256 ? source.downsampleBy(2) : source;
   const n = field.size;
   const data = new Uint8Array(n * n * 4);
   for (let i = 0, o = 0; i < field.data.length; i++, o += 4) {
@@ -218,8 +228,10 @@ export function flowTexture(fx: Field, fy: Field, name = 'flow'): THREE.DataText
  * Same maps at a different UV repeat.
  *
  * `repeat` lives on the texture, not the material, so a shared texture forces a
- * shared tiling. This hands back clones — same pixels, no second upload of the
- * source array — and caches them, so asking twice still gets one instance.
+ * shared tiling. This hands back clones sharing the same CPU buffer, cached, so
+ * asking twice still gets one instance. The GPU does keep a second copy — a
+ * clone is a second upload — so this is for "the sleeve tiles twice and the
+ * trouser leg four times", not for per-mesh bookkeeping.
  */
 export function tiled(set: TexSet, repeatU: number, repeatV = repeatU): TexSet {
   if (repeatU === 1 && repeatV === 1) return set;

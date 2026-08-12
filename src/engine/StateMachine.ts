@@ -187,8 +187,10 @@ export class StateMachine {
 
     if (!contacted) return CancelPay.No;
 
-    // Paid. HD mode first — inside HD every attack cancels into every attack.
-    if (f.gauges.hdActive && targetTier >= AttackTier.Special) return CancelPay.HD;
+    // Paid. HD mode first, and it really does mean everything: inside HD a
+    // heavy cancels into another heavy, which is where KOF XIII's absurd
+    // custom combos come from. The price is timer, charged per cancel.
+    if (f.gauges.hdActive && targetTier >= AttackTier.Normal) return CancelPay.HD;
     if (
       curTier >= AttackTier.Special &&
       targetTier >= AttackTier.Special &&
