@@ -172,7 +172,7 @@ const BASE: FaceSpec = {
   noseLen: 0.43, noseY: 0.335, noseW: 0.062, noseBridge: 1,
   mouthY: 0.175, mouthW: 0.105, lipFull: 1,
   earSize: 1,
-  eyeR: 0.056, eyeX: 0.152, eyeY: 0.472, eyeZ: 0.235,
+  eyeR: 0.056, eyeX: 0.152, eyeY: 0.472, eyeZ: 0.188,
   eyeOpen: 0.92, lidUpper: 0.5, lidLower: 0.4, eyeTilt: 0.06, hood: 0.18,
   lashWeight: 0.13, irisR: 0.42, irisColor: 0x5b3520, irisEdge: 0.3, pupil: 0.42,
   browThick: 0.032, browArch: 0.022, browTilt: 0.02, browLen: 1.05, browInner: 0.055,
@@ -271,6 +271,8 @@ interface SPrim {
   ezx: number; ezy: number; ezz: number;
   len: number; coneA: number; coneB: number; coneAL: number;
   minS: number;
+  /** Ellipsoid radii, for the degenerate (point) case. */
+  rx: number; ry: number; rz: number;
   cx: number; cy: number; cz: number; br: number;
 }
 
@@ -338,6 +340,7 @@ class Sculpt {
       ezx: _rf.x, ezy: _rf.y, ezz: _rf.z,
       len: L, coneA, coneB, coneAL: coneA * L,
       minS: Math.min(sx, 1, sz),
+      rx: ra * sx, ry: ra, rz: ra * sz,
       cx: (a[0] + b[0]) * 0.5, cy: (a[1] + b[1]) * 0.5, cz: (a[2] + b[2]) * 0.5,
       br: L * 0.5 + Math.max(ra, rb) * Math.max(sx, 1, sz) + k,
     });
@@ -367,6 +370,28 @@ class Sculpt {
         continue;
       }
       const qx = x - p.ax, qy = y - p.ay, qz = z - p.az;
+
+      let di: number;
+      if (p.len === 0) {
+        // Anisotropic ellipsoids are common here — a lash-thin ear, a wide flat
+        // brow — and the usual "scale the axes, take the sphere distance, undo
+        // by the smallest scale" underestimates by that scale factor, which
+        // silently multiplies every blend radius on the thin axis. This is the
+        // first-order-exact form instead, so `k` means what it says.
+        const ax2 = qx / p.rx, ay2 = qy / p.ry, az2 = qz / p.rz;
+        const k0 = Math.sqrt(ax2 * ax2 + ay2 * ay2 + az2 * az2);
+        if (k0 < 1e-9) {
+          di = -Math.min(p.rx, p.ry, p.rz);
+        } else {
+          const bx = qx / (p.rx * p.rx), by = qy / (p.ry * p.ry), bz = qz / (p.rz * p.rz);
+          const k1 = Math.sqrt(bx * bx + by * by + bz * bz);
+          di = (k0 * (k0 - 1)) / k1;
+        }
+        if (p.sub) d = -smin(-d, di, p.k);
+        else d = smin(d, di, p.k);
+        continue;
+      }
+
       const lx = (qx * p.exx + qy * p.exy + qz * p.exz) / p.sx;
       const ly = qx * p.eyx + qy * p.eyy + qz * p.eyz;
       const lz = (qx * p.ezx + qy * p.ezy + qz * p.ezz) / p.sz;
@@ -376,10 +401,7 @@ class Sculpt {
       let r = Math.sqrt(x2 + z2);
       if (p.nmix > 0) r += (Math.sqrt(Math.sqrt(x2 * x2 + z2 * z2)) - r) * p.nmix;
 
-      let di: number;
-      if (p.len === 0) {
-        di = Math.sqrt(r * r + ly * ly) - p.ra;
-      } else {
+      {
         const t = r * -p.coneB + ly * p.coneA;
         if (t < 0) di = Math.sqrt(r * r + ly * ly) - p.ra;
         else if (t > p.coneAL) {
@@ -388,7 +410,8 @@ class Sculpt {
         } else di = r * p.coneA + ly * p.coneB - p.ra;
       }
       di *= p.minS;
-      if (p.sub) d = -smin(-d, -(-di), p.k);
+      // Subtraction is `smax(d, -di)`, and `smax(a,b,k) = -smin(-a,-b,k)`.
+      if (p.sub) d = -smin(-d, di, p.k);
       else d = smin(d, di, p.k);
     }
     return d;
@@ -414,8 +437,11 @@ export class HeadForm {
   readonly y0: number;
   /** World z the local frame measures from. */
   readonly z0: number;
-  /** Skull half-width in local units. */
+  /** Skull half-width in local units, after the per-fighter width dial. */
   readonly hw: number;
+  /** Skull half-width before the width dial: sets height and depth, which must
+   *  stay put or a wide face becomes a big head. */
+  readonly h0: number;
   readonly spec: FaceSpec;
   private readonly s = new Sculpt();
 
@@ -424,7 +450,8 @@ export class HeadForm {
     this.y0 = j.head.y;
     this.z0 = j.head.z;
     this.spec = spec;
-    this.hw = m.skullR * (1 - 0.03 * m.fem) / m.headLen * spec.faceW;
+    this.h0 = (m.skullR * (1 - 0.03 * m.fem)) / m.headLen;
+    this.hw = this.h0 * spec.faceW;
     this.build(m, j);
   }
 
@@ -509,54 +536,61 @@ export class HeadForm {
     const S = this.s;
     const sp = this.spec;
     const w = this.hw;
+    const h0 = this.h0;
     const HL = this.HL;
 
-    // The neck, copied from `body.ts` so the projection is a no-op down there.
-    // Getting this wrong is the one way this pass can leave a visible seam.
+    // The neck, from `body.ts`, so the projection is nearly a no-op down there —
+    // getting this wrong is the one way this pass can leave a visible seam. Only
+    // the *top* is moved: the body's neck runs as far forward as the chin, which
+    // is what buried the jaw. The fade to the untouched neck is 40 mm long, so
+    // pulling the top back 8 mm costs nothing at the join.
     const nr = m.neckR / HL;
     const nyBase = (m.neckBaseY - 0.02 * m.height - this.y0) / HL;
     const nzBase = (-0.008 * m.height - this.z0) / HL;
-    S.bone([0, nyBase, nzBase], [0, 0.14, 0.02], nr, nr * 0.85, { sz: 0.95, n: 2.2, k: 0.09 });
+    S.bone([0, nyBase, nzBase], [0, 0.15, -0.045], nr, nr * 0.84, { sz: 0.95, n: 2.2, k: 0.09 });
 
     // --- cranium -----------------------------------------------------------
-    // Deliberately the same ellipsoid `hair.ts` fits to (centre 0.66 HL above
-    // the chin, radii 1 : 1.03 : 1.22 on the skull half-width), so hair keeps
-    // sitting on the scalp. Only its depth is trimmed a little, and the front is
-    // then carved back below the hairline where hair does not lie flat anyway.
-    S.ball([0, 0.658, 0.012], [w, w * 1.03, w * 1.185 * sp.skullDepth], { k: 0 });
+    // Height and depth come from `h0` (the skull radius the body and `hair.ts`
+    // were both built from) so the crown stays where hair was fitted; only the
+    // lateral radius takes the per-fighter width dial.
+    S.ball([0, 0.652, 0.005], [w, h0 * 1.0, h0 * 1.16 * sp.skullDepth], { k: 0 });
     // Occiput. The single biggest miss in the old head: without it the back of
     // the skull is a smooth dome that runs straight into the neck, and the head
     // reads as an egg balanced on a stick from any angle but dead front.
-    S.ball([0, 0.5, -0.185], [w * 0.9, 0.2, 0.23 * sp.occiput], { k: 0.07 });
+    S.ball([0, 0.5, -0.175], [w * 0.9, 0.205, 0.235 * sp.occiput], { k: 0.09 });
     // Mastoid / nuchal mass behind and below the ear, joining skull to neck.
-    S.pair((s) => S.ball([s * w * 0.58, 0.315, -0.155], [0.1, 0.115, 0.14], { k: 0.06 }));
+    S.pair((s) => S.ball([s * w * 0.56, 0.315, -0.15], [0.1, 0.115, 0.145], { k: 0.08 }));
     // Parietal slab: keeps the skull square-ish above the ear instead of round,
-    // which is what makes the temple read as a plane.
-    S.pair((s) => S.ball([s * w * 0.66, 0.555, -0.045], [0.115, 0.185, 0.245], { k: 0.07 }));
+    // which is what makes the temple read as a plane. Generous k — a hard edge
+    // here shows up as a shading break running over the crown.
+    S.pair((s) => S.ball([s * w * 0.62, 0.545, -0.05], [0.115, 0.19, 0.245], { k: 0.13 }));
 
     // --- mid-face ----------------------------------------------------------
     // A flattish front plane between the cheekbones. A round section here is why
     // the old head had no face: the midline bulged as far forward as the nose.
-    S.bone([0, 0.6, 0.115], [0, 0.26, 0.145], w * 0.72, w * 0.62, {
-      sz: 0.84, n: 2.8, k: 0.05,
+    S.bone([0, 0.6, 0.09], [0, 0.255, 0.115], w * 0.74, w * 0.6, {
+      sz: 0.82, n: 3.0, k: 0.06,
     });
-    // Maxilla — the muzzle carrying the upper lip and the nose base.
-    S.ball([0, 0.315, 0.2], [w * 0.56, 0.115, 0.155], { n: 2.4, k: 0.045 });
+    // Maxilla and the front of the mandible. Between them they carry the whole
+    // lower face at one z, so the lips can sit a believable 4 mm proud of it
+    // instead of 11 mm, which is what read as a muzzle.
+    S.ball([0, 0.295, 0.165], [w * 0.52, 0.115, 0.135], { n: 2.4, k: 0.06 });
+    S.ball([0, 0.16, 0.175], [w * 0.46, 0.095, 0.12], { n: 2.4, k: 0.05 });
 
     // Cheekbones and the zygomatic arch running back to the ear. Height is the
     // per-fighter dial that separates Mali from Kai at a glance.
     S.pair((s) =>
       S.ball(
-        [s * w * 0.665 * sp.cheekOut, sp.cheekY, 0.115],
-        [0.105 * sp.cheekOut, 0.072, 0.15],
-        { k: 0.045 },
+        [s * (w * 0.6 + 0.03 * sp.cheekOut), sp.cheekY, 0.135],
+        [0.1 * sp.cheekOut, 0.07, 0.145],
+        { k: 0.05 },
       ),
     );
     S.pair((s) =>
       S.bone(
-        [s * w * 0.74, sp.cheekY + 0.02, 0.03],
-        [s * w * 0.42, sp.cheekY - 0.02, 0.225],
-        0.05, 0.044, { k: 0.04 },
+        [s * w * 0.78, sp.cheekY + 0.015, -0.02],
+        [s * w * 0.5, sp.cheekY - 0.015, 0.19],
+        0.045, 0.042, { k: 0.09 },
       ),
     );
 
@@ -564,13 +598,13 @@ export class HeadForm {
     // and back over the orbit. The ridge is what casts the shadow the eye sits
     // in, so `browHeavy` is the loudest single dial in the box.
     const bh = sp.browHeavy;
-    S.ball([0, sp.browY + 0.012, 0.245], [0.07, 0.045 + 0.02 * bh, 0.06 * bh], { k: 0.035 });
+    S.ball([0, sp.browY + 0.01, 0.225], [0.075, 0.05 + 0.018 * bh, 0.055 * bh], { k: 0.05 });
     S.pair((s) =>
       S.bone(
-        [s * 0.05, sp.browY + 0.008, 0.245],
-        [s * 0.225, sp.browY + 0.012, 0.14],
-        0.05 + 0.022 * bh, 0.04 + 0.016 * bh,
-        { sz: 0.62, k: 0.03 },
+        [s * 0.045, sp.browY + 0.006, 0.225],
+        [s * 0.235, sp.browY + 0.02, 0.105],
+        0.055 + 0.02 * bh, 0.045 + 0.014 * bh,
+        { sz: 0.6, k: 0.05 },
       ),
     );
 
@@ -579,26 +613,26 @@ export class HeadForm {
     // chin). Small blend radii on purpose: the jaw has to keep an *edge*, and a
     // generous smooth-min is exactly what dissolved it before.
     const jw = sp.jawW;
-    const gonZ = -0.115 - 0.02 * sp.jawSquare;
+    const gonZ = -0.1 - 0.025 * sp.jawSquare;
     S.pair((s) =>
-      S.bone([s * jw * 0.98, 0.44, gonZ + 0.01], [s * jw, 0.245, gonZ], 0.055, 0.07, {
-        sz: 0.8, n: 2 + 1.6 * sp.jawSquare, k: 0.035,
+      S.bone([s * jw * 0.94, 0.45, gonZ + 0.03], [s * jw, 0.215, gonZ], 0.048, 0.058, {
+        sz: 0.62, n: 2 + 1.8 * sp.jawSquare, k: 0.05,
       }),
     );
     S.pair((s) =>
-      S.bone([s * jw, 0.245, gonZ], [s * sp.chinW * 0.72, 0.055, 0.255], 0.072, 0.05, {
-        sz: 0.86, n: 2 + 1.2 * sp.jawSquare, k: 0.03,
+      S.bone([s * jw, 0.215, gonZ], [s * sp.chinW * 0.7, 0.055, 0.235], 0.056, 0.042, {
+        sz: 0.7, n: 2 + 1.6 * sp.jawSquare, k: 0.022,
       }),
     );
     // Masseter: the slab that makes a fighter's jaw wide from the front.
     S.pair((s) =>
-      S.ball([s * (jw - 0.03), 0.335, -0.02], [0.062 * sp.masseter, 0.105, 0.125], { k: 0.05 }),
+      S.ball([s * (jw - 0.02), 0.325, -0.02], [0.05 * sp.masseter, 0.1, 0.125], { k: 0.09 }),
     );
     // Chin. Squarer section on the heavy builds; `chinFwd` sets the profile.
     S.ball(
-      [0, 0.075, 0.255 + 0.045 * sp.chinFwd],
-      [sp.chinW, 0.075, 0.075 * sp.chinFwd],
-      { n: 2.2 + 1.4 * sp.jawSquare, k: 0.04 },
+      [0, 0.085, 0.205 + 0.045 * sp.chinFwd],
+      [sp.chinW, 0.082, 0.09 * sp.chinFwd],
+      { n: 2.2 + 1.4 * sp.jawSquare, k: 0.05 },
     );
 
     // --- nose --------------------------------------------------------------
@@ -606,40 +640,43 @@ export class HeadForm {
     // bridge is one tapered bone from the nasion to just above the tip, then the
     // tip, wings and columella are separate small masses.
     const nb = sp.noseBridge;
-    S.bone([0, 0.55, 0.245], [0, sp.noseY + 0.03, sp.noseLen - 0.045], 0.03 * nb, 0.042 * nb, {
-      sx: 1.05, sz: 0.85, k: 0.014,
+    S.bone([0, 0.545, 0.225], [0, sp.noseY + 0.028, sp.noseLen - 0.045], 0.028 * nb, 0.04 * nb, {
+      sx: 1.05, sz: 0.85, k: 0.02,
     });
-    S.ball([0, sp.noseY, sp.noseLen - 0.015], [0.048, 0.042, 0.05], { k: 0.012 });
+    S.ball([0, sp.noseY, sp.noseLen - 0.018], [0.046, 0.04, 0.048], { k: 0.014 });
     S.pair((s) =>
-      S.ball([s * sp.noseW, sp.noseY - 0.03, sp.noseLen - 0.075], [0.042, 0.034, 0.046], {
-        k: 0.014,
+      S.ball([s * sp.noseW, sp.noseY - 0.03, sp.noseLen - 0.08], [0.04, 0.033, 0.044], {
+        k: 0.016,
       }),
     );
-    S.ball([0, sp.noseY - 0.038, sp.noseLen - 0.06], [0.026, 0.028, 0.04], { k: 0.012 });
+    S.ball([0, sp.noseY - 0.038, sp.noseLen - 0.065], [0.026, 0.026, 0.038], { k: 0.014 });
 
     // --- lips --------------------------------------------------------------
-    // Only the *mound* is here; the lip surfaces themselves are separate meshes
-    // in `face.ts` so the mouth can open.
+    // Only a shallow *mound*; the lip surfaces themselves are separate meshes in
+    // `face.ts` so the mouth can open, and stacking both reads as a snout.
     const lf = sp.lipFull;
-    S.ball([0, sp.mouthY + 0.028, 0.335], [sp.mouthW * 1.02, 0.032 * lf, 0.045 * lf], {
-      n: 2.4, k: 0.022,
+    S.ball([0, sp.mouthY + 0.022, 0.245], [sp.mouthW * 1.0, 0.03 * lf, 0.05 * lf], {
+      n: 2.6, k: 0.045,
     });
-    S.ball([0, sp.mouthY - 0.036, 0.338], [sp.mouthW * 0.94, 0.034 * lf, 0.048 * lf], {
-      n: 2.3, k: 0.022,
+    S.ball([0, sp.mouthY - 0.032, 0.245], [sp.mouthW * 0.92, 0.032 * lf, 0.052 * lf], {
+      n: 2.5, k: 0.045,
     });
 
     // --- ears --------------------------------------------------------------
     // Mass only: the helix and concha are separate geometry. This has to live in
     // the body mesh because the ear is the one feature that breaks the head's
     // silhouette sideways, and the silhouette is drawn from this mesh.
+    // A flat plate standing off the side of the skull, plus a lobe. It has to
+    // reach past the cranium's lateral surface (about 0.29 HL out at ear height)
+    // or it is a bump inside the head rather than an ear.
     const es = sp.earSize;
     S.pair((s) =>
-      S.ball([s * w * 0.98, 0.42, -0.115], [0.04 * es, 0.108 * es, 0.075 * es], {
-        n: 2.3, k: 0.02,
+      S.ball([s * w * 0.86, 0.425, -0.07], [0.055 * es, 0.115 * es, 0.078 * es], {
+        n: 2.6, k: 0.035,
       }),
     );
     S.pair((s) =>
-      S.ball([s * w * 0.95, 0.322, -0.1], [0.032 * es, 0.042 * es, 0.045 * es], { k: 0.02 }),
+      S.ball([s * w * 0.83, 0.318, -0.035], [0.046 * es, 0.045 * es, 0.045 * es], { k: 0.035 }),
     );
 
     // --- subtractions ------------------------------------------------------
@@ -648,40 +685,55 @@ export class HeadForm {
 
     // Forehead: lean it back above the brow. Stops short of the hairline so the
     // scalp hair still lies on the ellipsoid it was fitted to.
-    S.ball([0, 0.62, 0.44 + sp.foreheadBack * 1.2], [0.42, 0.13, 0.14], { sub: true, k: 0.09 });
+    S.ball([0, 0.645, 0.415 + sp.foreheadBack * 1.6], [0.44, 0.145, 0.145], { sub: true, k: 0.11 });
     // Orbits. This is what makes the brow read as a brow: an eye in a hole with
-    // a ridge over it, rather than an eye painted on a curve.
+    // a ridge over it, rather than an eye painted on a curve. Shallow on purpose
+    // — a deep socket on a bald head reads as a skull, and the eyeball and lids
+    // that fill it are only a few millimetres of relief.
     S.pair((s) =>
       S.ball(
-        [s * sp.eyeX, sp.eyeY + 0.012, sp.eyeZ + 0.135 + 0.022 * sp.orbitDeep],
-        [0.115, 0.082, 0.105 * sp.orbitDeep],
-        { sub: true, k: 0.05 },
+        [s * sp.eyeX, sp.eyeY + 0.02, sp.eyeZ + 0.145],
+        [0.105, 0.075, 0.062 * sp.orbitDeep],
+        { sub: true, k: 0.075 },
       ),
     );
     // Temple hollows, behind the brow's outer end.
     S.pair((s) =>
-      S.ball([s * (w + 0.055), sp.browY + 0.045, 0.2], [0.11, 0.115, 0.115], {
-        sub: true, k: 0.075 * sp.temple,
+      S.ball([s * (w + 0.075), sp.browY + 0.05, 0.175], [0.1, 0.115, 0.105], {
+        sub: true, k: 0.09 * sp.temple,
       }),
     );
-    // Buccal hollow under the cheekbone — the shadow that makes a cheekbone.
+    // Buccal hollow: in *front* of the masseter, under the cheekbone. Placed on
+    // the side of the jaw it eats the jaw itself, which is what made the first
+    // pass read as a narrow-jawed alien.
     S.pair((s) =>
-      S.ball([s * (jw + 0.045), 0.29, 0.155], [0.09 * sp.buccal, 0.1, 0.11], {
-        sub: true, k: 0.075,
+      S.ball([s * (w * 0.62), sp.cheekY - 0.15, 0.2], [0.055 * sp.buccal, 0.09, 0.06], {
+        sub: true, k: 0.1,
       }),
     );
     // Undercut beneath the nose, so the nose has a base rather than a ramp.
-    S.ball([0, sp.noseY - 0.135, sp.noseLen + 0.02], [0.1, 0.075, 0.075], { sub: true, k: 0.022 });
-    // Mouth seam and the mentolabial sulcus below the lower lip.
-    S.ball([0, sp.mouthY - 0.088, 0.375], [sp.mouthW * 0.95, 0.03, 0.045], {
-      sub: true, k: 0.045,
+    S.ball([0, sp.noseY - 0.125, sp.noseLen + 0.02], [0.085, 0.06, 0.055], { sub: true, k: 0.03 });
+    // Mentolabial sulcus below the lower lip. Barely there: under a two-band cel
+    // ramp any real crease here becomes a black bar across the chin.
+    S.ball([0, sp.mouthY - 0.08, 0.275], [sp.mouthW * 0.9, 0.02, 0.026], {
+      sub: true, k: 0.06,
     });
-    // Submental scoop: gives the jaw an underside instead of letting it run
-    // smoothly into the throat.
-    S.ball([0, 0.03, 0.235], [0.185, 0.06, 0.14], { sub: true, k: 0.06 });
-    // Front of the ear: a shallow trench so the ear is a separate form.
+    // Submandibular hollows: the shadow under the jaw line. Paired and set back
+    // from the midline so the chin keeps its underside and the throat keeps its
+    // front — a single scoop on the midline just shortens the chin.
     S.pair((s) =>
-      S.ball([s * (w * 0.86), 0.4, -0.055], [0.05, 0.1, 0.05], { sub: true, k: 0.035 }),
+      S.ball([s * 0.1, -0.035, 0.075], [0.1, 0.07, 0.115], { sub: true, k: 0.105 }),
+    );
+    // Front of the ear: a shallow trench so the ear reads as a separate form.
+    S.pair((s) =>
+      S.ball([s * (w * 0.92), 0.4, 0.035], [0.045, 0.1, 0.032], { sub: true, k: 0.06 }),
+    );
+    // Concha bowl. Without it the ear is a lump; with it the plate above becomes
+    // a helix rim, which is the whole read of an ear at fighting-game distance.
+    S.pair((s) =>
+      S.ball([s * (w * 0.86 + 0.05), 0.415, -0.06], [0.035, 0.058 * es, 0.042 * es], {
+        sub: true, k: 0.02,
+      }),
     );
   }
 }

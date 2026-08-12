@@ -3,6 +3,7 @@ import type { FighterDef } from '../../../data/roster';
 import type { BuiltCharacter } from '../rig';
 import { emptyCostume, type BuiltCostume } from './garment';
 import { buildKaiCostume } from './kai';
+import { buildVeraCostume } from './vera';
 
 /**
  * Costume assembly.
@@ -78,6 +79,9 @@ export function buildCostume(rig: BuiltCharacter, def: FighterDef = rig.def): Bu
   switch (def.id) {
     case 'kai':
       costume = buildKaiCostume(rig, def);
+      break;
+    case 'vera':
+      costume = buildVeraCostume(rig, def);
       break;
     default:
       costume = emptyCostume();

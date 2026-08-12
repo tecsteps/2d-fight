@@ -28,7 +28,7 @@ artifact instead of updating this one.
 | System | State | Critic score |
 | --- | --- | --- |
 | Build + capture pipeline | ✅ green | — |
-| **Overall frame (review 001)** | 🔨 | **13 / 50 — would not win** |
+| **Overall frame (review 002)** | 🔨 | **15 / 50 — would not win** |
 | Deterministic sim core (loop, RNG, input) | ✅ landed | — |
 | Roster data (4 fighters) | ✅ landed | — |
 | Character rig + body mesh | ✅ landed | — |
@@ -88,6 +88,13 @@ Design sheets in `/reference` (art direction only — never imported).
 | # | Frame | Score | Verdict |
 | --- | --- | --- | --- |
 | [001](reviews/001-lineup-baseline.md) | baseline lineup | 13 / 50 | no — ~15% there |
+| [002](reviews/002-first-dressed.md) | first dressed lineup | 15 / 50 | no — ~18% there |
+
+**Review 002 found a systemic failure, not just defects:** the ink fix and the
+lighting fix cancelled each other out. Each agent passed its own metric; the
+frame got worse. That produced [`FRAME_BUDGET.md`](FRAME_BUDGET.md) — shared
+frame-level invariants that no single system can satisfy by pushing cost onto
+another.
 
 Review 001 caught two places where a wave-A agent's self-report did not match the
 pixels (shadows measured *warmer* than lit skin, not cooler; the ink outline is a
