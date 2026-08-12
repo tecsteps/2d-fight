@@ -27,18 +27,37 @@ def luminance(rgb: np.ndarray) -> np.ndarray:
     return rgb.astype(np.float32) @ LUMA
 
 
-def find_figures(lum: np.ndarray, bg_thresh: float = 1.35, min_w: int = 40):
-    """Split the frame into figure column-bands by vertical brightness profile.
+def find_figures(lum: np.ndarray, bg_thresh: float = 0.15, min_w: int = 40):
+    """Split the frame into figure column-bands by vertical contrast profile.
 
-    Fighters are the only tall bright objects in the lineup scene, so a column
-    profile taken above the floor line separates them cleanly without needing a
-    matte. Returns [(x0, x1), ...] left to right.
+    Returns [(x0, x1), ...] left to right.
+
+    This used to threshold absolute column brightness against the frame median,
+    on the reasoning that "fighters are the only tall bright objects". That
+    holds only while the stage is nearly black, and the budget this file
+    measures explicitly requires the stage *not* to be — so the moment the
+    median frame luminance reached its target band the detector returned zero
+    figures and the whole per-figure table went silent. A tool that can only
+    measure frames that fail is not a tool.
+
+    What actually distinguishes a fighter from the stage is that the stage is
+    smooth along x while a fighter is not: at any given row the backdrop and the
+    floor are within a couple of luminance units of that row's median, and a
+    fighter deviates from it in *either* direction — bright skin above it, dark
+    costume and ink below it. So the profile is mean |luminance − row median|,
+    which is blind to how bright the stage is and picks up dark-costumed
+    fighters as readily as bright-skinned ones.
+
+    `bg_thresh` is now a fraction of the profile's own range above its median
+    rather than a brightness ratio. Verified to return the same spans as the
+    previous implementation on `shots/full-0000.png` and the review-002 frames.
     """
     h, w = lum.shape
-    band = lum[int(h * 0.28):int(h * 0.62), :]
+    resid = np.abs(lum - np.median(lum, axis=1, keepdims=True))
+    band = resid[int(h * 0.28):int(h * 0.62), :]
     prof = band.mean(axis=0)
     base = np.median(prof)
-    mask = prof > base * bg_thresh
+    mask = prof > base + bg_thresh * (np.percentile(prof, 99) - base)
 
     spans = []
     x = 0
@@ -85,6 +104,23 @@ def analyse(path: Path) -> dict:
         cl = lum[:, x0:x1]
         # Figure pixels: brighter than the local background median. Crude, but
         # consistent across runs, which is what matters for tracking a delta.
+        #
+        # KNOWN BAD on a stage that meets the global budget, and deliberately
+        # left alone rather than quietly redefined mid-wave. `median(cl)` over a
+        # full-height column strip is a stand-in for "the background", and that
+        # only holds while backdrop and floor are the same value — i.e. while the
+        # stage is nearly black. On a stage whose floor sits at its budgeted
+        # L≈110-150 the strip median lands between sky and floor, the near floor
+        # passes this test, and every per-figure number below is then part
+        # ground: shadow/lit ratios climb toward 0.9 on a roster whose ratio has
+        # not moved. Nothing in the loop below can be trusted on such a frame.
+        #
+        # The fix is a real matte — one extra capture with the fighters rendered
+        # to a mask — not another threshold. Every purely photometric rule tried
+        # here (row-median reference, |deviation| from the row median, clipping
+        # to the figure's rows) either admits the near-black ink and destroys the
+        # hue statistics, or shifts the historical numbers so reviews 001/002 can
+        # no longer be compared against.
         bg = np.median(cl)
         m = cl > bg * 1.25
         if m.sum() < 500:

@@ -19,6 +19,37 @@ import type { BloomSpec } from './contract';
  *
  * The chain starts at half resolution. Bloom is the lowest-frequency thing in
  * the frame; paying full rate for it buys nothing and costs 3 ms.
+ *
+ * ## The halo guard, and why a 2D fighter gets almost no bloom
+ *
+ * Everything above is about how the glow *falls off*. What review 002 caught is
+ * a different question — what is allowed to glow at all — and getting it wrong
+ * is worth more than every quality property in this file put together.
+ *
+ * The spec that shipped asked for `threshold 0.78, knee 0.42`, so the soft knee
+ * opened at scene-linear 0.36. A fighter's lit skin sits at about 0.5. Every
+ * fighter in the frame was therefore a bloom source along their whole lit side,
+ * and the measurement is unambiguous: background luminance climbed **+30 to
+ * +60% over the last 30px approaching a figure**, and the lift was absent on the
+ * darkest-skinned fighter, which proves it scaled with figure brightness rather
+ * than being anything in the stage.
+ *
+ * A hand-drawn sprite has *zero* bleed into the background. Nothing about a
+ * painted 2D fighter glows: the light in the frame is drawn, not emitted. A
+ * halo around a character is the single loudest cue that a frame was rendered in
+ * 3D — louder than the shading, louder than the outline — because it is the one
+ * artifact that has no counterpart anywhere in hand-painted work.
+ *
+ * So `MIN_KNEE_FLOOR` below is a floor on where the knee may open, expressed in
+ * scene-linear radiance and enforced here rather than left to each stage's
+ * tuning. It is deliberately above anything a *diffuse surface* can reach under
+ * a sane rig, which leaves bloom to do the only job it should have in this
+ * renderer: genuine emitters — hitsparks, super flashes, practicals, blade
+ * trails — authored above the floor on purpose. If a stage's glow has
+ * disappeared, the fix is to make the emitter brighter, not to lower this.
+ *
+ * The guard is a clamp and a warning rather than an assertion because a stage
+ * mid-authoring should still render; the warning names the number to change.
  */
 export class BloomChain {
   /** Mip 0 is half-res and is the texture the composite samples. */
@@ -65,20 +96,64 @@ export class BloomChain {
     this.applySpec();
   }
 
+  /**
+   * Lowest scene-linear radiance at which the soft knee may start to admit
+   * light, i.e. the smallest legal `threshold - knee`.
+   *
+   * 1.0 is not a round number chosen for tidiness — it is measured. Under the
+   * `dusk` rig the brightest diffuse surface in the lineup frame is a fighter's
+   * lit skin at scene-linear ≈ 0.55, and the brightest the stage itself reaches
+   * is ≈ 0.25 on the near floor. A knee opening at 1.0 clears the brightest
+   * *surface* by roughly a stop, which is the margin that keeps a cel-shaded
+   * body from bleeding while an emitter authored at 1.5-3.0 still floods.
+   */
+  private static readonly MIN_KNEE_FLOOR = 1.0;
+
+  /**
+   * Widest legal tent spread on the way back up the chain.
+   *
+   * The threshold decides *what* blooms; this decides how far what does bloom
+   * reaches sideways. At 0.85 a single bright pixel is still measurably lifting
+   * the background two mip levels away — fine for an anamorphic lens, wrong for
+   * a frame that has to read as drawn. 0.6 keeps the glow attached to its
+   * source.
+   */
+  private static readonly MAX_RADIUS = 0.6;
+
+  private warnedGuard = false;
+
   /** Re-reads `spec` into the uniforms. Cheap enough to call every frame. */
   applySpec(): void {
     const s = this.spec;
     const knee = Math.max(s.knee, 1e-4);
+
+    // The guard: keep the *bottom* of the knee above anything a lit surface can
+    // reach, by raising the threshold rather than by narrowing the knee — a
+    // hard knee makes the glow switch on and off across a whole surface as a
+    // light rotates, which is the failure the soft knee exists to prevent.
+    const threshold = Math.max(s.threshold, BloomChain.MIN_KNEE_FLOOR + knee);
+    const radius = Math.min(s.radius, BloomChain.MAX_RADIUS);
+
+    if (!this.warnedGuard && (threshold !== s.threshold || radius !== s.radius)) {
+      this.warnedGuard = true;
+      console.warn(
+        `[bloom] spec asks for threshold ${s.threshold} / radius ${s.radius}; clamped to ` +
+          `${threshold.toFixed(2)} / ${radius.toFixed(2)}. A knee opening below ` +
+          `${BloomChain.MIN_KNEE_FLOOR} admits lit skin and haloes every fighter — see the ` +
+          `header and docs/FRAME_BUDGET.md. Raise the emitter, not the bloom.`,
+      );
+    }
+
     // Packed the way the shader wants it so the knee costs three multiplies
     // instead of a branch: (threshold, threshold-knee, 2*knee, 0.25/knee).
     (this.down.uniforms.uThreshold.value as THREE.Vector4).set(
-      s.threshold,
-      s.threshold - knee,
+      threshold,
+      threshold - knee,
       2 * knee,
       0.25 / knee,
     );
     this.down.uniforms.uSaturation.value = s.saturation;
-    this.up.uniforms.uRadius.value = s.radius;
+    this.up.uniforms.uRadius.value = radius;
   }
 
   /** `width`/`height` are the full-resolution frame in device pixels. */

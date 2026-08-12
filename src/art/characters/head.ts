@@ -172,10 +172,10 @@ const BASE: FaceSpec = {
   noseLen: 0.43, noseY: 0.335, noseW: 0.062, noseBridge: 1,
   mouthY: 0.175, mouthW: 0.105, lipFull: 1,
   earSize: 1,
-  eyeR: 0.056, eyeX: 0.152, eyeY: 0.472, eyeZ: 0.203,
+  eyeR: 0.066, eyeX: 0.155, eyeY: 0.472, eyeZ: 0.196,
   eyeOpen: 0.92, lidUpper: 0.5, lidLower: 0.4, eyeTilt: 0.06, hood: 0.18,
-  lashWeight: 0.13, irisR: 0.42, irisColor: 0x5b3520, irisEdge: 0.3, pupil: 0.42,
-  browThick: 0.032, browArch: 0.022, browTilt: 0.02, browLen: 1.05, browInner: 0.055,
+  lashWeight: 0.26, irisR: 0.44, irisColor: 0x5b3520, irisEdge: 0.3, pupil: 0.42,
+  browThick: 0.016, browArch: 0.022, browTilt: 0.02, browLen: 1.05, browInner: 0.055,
   freckles: 0, lipTint: 0.35,
 };
 
@@ -194,9 +194,9 @@ const SPECS: Record<string, Partial<FaceSpec>> = {
     browHeavy: 1.0, browY: 0.552, orbitDeep: 0.9, temple: 0.85,
     noseLen: 0.425, noseY: 0.338, noseW: 0.058, noseBridge: 0.92,
     mouthY: 0.178, mouthW: 0.104, lipFull: 0.92,
-    eyeR: 0.058, eyeX: 0.153, eyeY: 0.474, lidUpper: 0.55, lidLower: 0.44,
-    eyeTilt: 0.05, hood: 0.12, lashWeight: 0.15, irisR: 0.45, irisColor: 0x5e3a22,
-    browThick: 0.036, browArch: 0.018, browTilt: 0.055, browLen: 1.08, browInner: 0.048,
+    eyeR: 0.069, eyeX: 0.156, eyeY: 0.474, lidUpper: 0.54, lidLower: 0.44,
+    eyeTilt: 0.05, hood: 0.12, lashWeight: 0.3, irisR: 0.47, irisColor: 0x5e3a22,
+    browThick: 0.019, browArch: 0.018, browTilt: 0.055, browLen: 1.08, browInner: 0.048,
     lipTint: 0.3,
   },
   mali: {
@@ -209,9 +209,9 @@ const SPECS: Record<string, Partial<FaceSpec>> = {
     noseLen: 0.425, noseY: 0.332, noseW: 0.055, noseBridge: 0.86,
     mouthY: 0.172, mouthW: 0.1, lipFull: 1.22,
     earSize: 0.92,
-    eyeR: 0.056, eyeX: 0.15, eyeY: 0.474, lidUpper: 0.5, lidLower: 0.4,
-    eyeTilt: 0.13, hood: 0.16, lashWeight: 0.16, irisR: 0.42, irisColor: 0x6b4523,
-    browThick: 0.024, browArch: 0.008, browTilt: 0.005, browLen: 1.1, browInner: 0.05,
+    eyeR: 0.066, eyeX: 0.153, eyeY: 0.474, lidUpper: 0.49, lidLower: 0.4,
+    eyeTilt: 0.13, hood: 0.16, lashWeight: 0.32, irisR: 0.44, irisColor: 0x6b4523,
+    browThick: 0.012, browArch: 0.008, browTilt: 0.005, browLen: 1.1, browInner: 0.05,
     lipTint: 0.5,
   },
   davi: {
@@ -223,9 +223,9 @@ const SPECS: Record<string, Partial<FaceSpec>> = {
     browHeavy: 0.8, browY: 0.562, orbitDeep: 1.0, temple: 1.0,
     noseLen: 0.435, noseY: 0.33, noseW: 0.072, noseBridge: 0.88,
     mouthY: 0.17, mouthW: 0.104, lipFull: 1.3,
-    eyeR: 0.055, eyeX: 0.158, eyeY: 0.472, lidUpper: 0.5, lidLower: 0.42,
-    eyeTilt: 0.04, hood: 0.14, lashWeight: 0.13, irisR: 0.42, irisColor: 0x3d2717,
-    browThick: 0.026, browArch: 0.03, browTilt: 0.03, browLen: 1.05, browInner: 0.056,
+    eyeR: 0.065, eyeX: 0.161, eyeY: 0.472, lidUpper: 0.49, lidLower: 0.42,
+    eyeTilt: 0.04, hood: 0.14, lashWeight: 0.26, irisR: 0.44, irisColor: 0x3d2717,
+    browThick: 0.013, browArch: 0.03, browTilt: 0.03, browLen: 1.05, browInner: 0.056,
     lipTint: 0.42,
   },
   vera: {
@@ -238,10 +238,10 @@ const SPECS: Record<string, Partial<FaceSpec>> = {
     noseLen: 0.42, noseY: 0.336, noseW: 0.062, noseBridge: 1.1,
     mouthY: 0.176, mouthW: 0.107, lipFull: 0.82,
     earSize: 0.95,
-    eyeR: 0.055, eyeX: 0.152, eyeY: 0.468, lidUpper: 0.44, lidLower: 0.36,
-    eyeTilt: 0.0, hood: 0.32, lashWeight: 0.12, irisR: 0.4, irisColor: 0x7a7a48,
+    eyeR: 0.064, eyeX: 0.155, eyeY: 0.468, lidUpper: 0.44, lidLower: 0.36,
+    eyeTilt: 0.0, hood: 0.32, lashWeight: 0.24, irisR: 0.42, irisColor: 0x7a7a48,
     irisEdge: 0.38,
-    browThick: 0.038, browArch: 0.012, browTilt: -0.03, browLen: 1.02, browInner: 0.05,
+    browThick: 0.021, browArch: 0.012, browTilt: -0.03, browLen: 1.02, browInner: 0.05,
     freckles: 0.62, lipTint: 0.28,
   },
 };
@@ -692,8 +692,8 @@ export class HeadForm {
     // that fill it are only a few millimetres of relief.
     S.pair((s) =>
       S.ball(
-        [s * sp.eyeX, sp.eyeY + 0.018, sp.eyeZ + 0.105],
-        [0.092, 0.076, 0.062 * sp.orbitDeep],
+        [s * sp.eyeX, sp.eyeY + 0.014, sp.eyeZ + 0.082],
+        [0.105, 0.082, 0.07 * sp.orbitDeep],
         { sub: true, k: 0.07 },
       ),
     );
@@ -715,11 +715,17 @@ export class HeadForm {
       }),
     );
     // Undercut beneath the nose, so the nose has a base rather than a ramp.
-    S.ball([0, sp.noseY - 0.125, sp.noseLen + 0.02], [0.085, 0.06, 0.055], { sub: true, k: 0.03 });
+    S.ball([0, sp.noseY - 0.125, sp.noseLen + 0.025], [0.085, 0.058, 0.05], { sub: true, k: 0.05 });
     // Mentolabial sulcus below the lower lip. Barely there: under a two-band cel
     // ramp any real crease here becomes a black bar across the chin.
     S.ball([0, sp.mouthY - 0.08, 0.305], [sp.mouthW * 0.9, 0.02, 0.026], {
       sub: true, k: 0.06,
+    });
+    // Lip seam. Thin and crisp: the dark of a closed mouth is a *groove*, and
+    // without one the mouth line has to be drawn on a smooth mound, where it is
+    // either buried or floating.
+    S.ball([0, sp.mouthY - 0.004, 0.315], [sp.mouthW * 0.98, 0.011, 0.045], {
+      sub: true, k: 0.014,
     });
     // Submandibular hollows: the shadow under the jaw line. Paired and set back
     // from the midline so the chin keeps its underside and the throat keeps its
@@ -944,33 +950,75 @@ export function refineHead(rig: BuiltCharacter, spec = faceSpec(rig.def)): HeadR
     moved++;
   }
 
-  const project = (i: number): void => {
+  /**
+   * Displace along the vertex's *own* normal to the nearest surface crossing.
+   *
+   * The obvious method — Newton along the field gradient — is what the first
+   * version did, and it fails on exactly the feature that matters most. In front
+   * of a concave dish (an eye socket) every gradient points at the dish's centre
+   * of curvature, so a whole patch of vertices converges on one point: measured
+   * over Kai's left orbit it left 151 vertices in one 12 mm cell and 4 in its
+   * neighbour, with the socket bridged by stretched triangles that hid the
+   * eyeball completely.
+   *
+   * Marching along the original normal is a pure displacement map: no tangential
+   * motion at all, so the vertex distribution the mesher produced is preserved
+   * exactly and a concavity cannot swallow it. Sphere tracing keeps it to about
+   * a dozen field samples.
+   */
+  const displace = (i: number): void => {
     const wt = weight[i];
     if (wt <= 0) return;
     const ox = md.pos[i * 3], oy = md.pos[i * 3 + 1], oz = md.pos[i * 3 + 2];
-    p.set(ox, oy, oz);
-    form.project(p);
-    md.pos[i * 3] = ox + (p.x - ox) * wt;
-    md.pos[i * 3 + 1] = oy + (p.y - oy) * wt;
-    md.pos[i * 3 + 2] = oz + (p.z - oz) * wt;
+    const nx = md.nrm[i * 3], ny = md.nrm[i * 3 + 1], nz = md.nrm[i * 3 + 2];
+    const at = (h: number) => form.sd(ox + nx * h, oy + ny * h, oz + nz * h);
+
+    let d0 = at(0);
+    if (Math.abs(d0) < HL * 2e-4) return;
+    const dir = d0 > 0 ? -1 : 1;
+    const limit = HL * 0.3;
+    let h = 0;
+    let prevH = 0;
+    let prev = d0;
+    let hit = false;
+    for (let k = 0; k < 30; k++) {
+      h += dir * Math.max(Math.abs(prev) * 0.85, HL * 0.004);
+      if (Math.abs(h) > limit) break;
+      const d = at(h);
+      if (d === 0 || prev < 0 !== d < 0) {
+        let lo = prevH;
+        let hi = h;
+        for (let b = 0; b < 18; b++) {
+          const mid = (lo + hi) * 0.5;
+          if (at(mid) < 0 === at(lo) < 0) lo = mid;
+          else hi = mid;
+        }
+        h = (lo + hi) * 0.5;
+        hit = true;
+        break;
+      }
+      prevH = h;
+      prev = d;
+    }
+    if (!hit) return;
+    const s = h * wt;
+    md.pos[i * 3] = ox + nx * s;
+    md.pos[i * 3 + 1] = oy + ny * s;
+    md.pos[i * 3 + 2] = oz + nz * s;
   };
 
-  for (let i = 0; i < n; i++) project(i);
+  for (let i = 0; i < n; i++) displace(i);
 
-  // Even the patch out and re-project. The sculpt contracts the forehead and
-  // grows the occiput by a couple of cells, which bunches vertices; two
-  // tangential relaxation passes cost little and stop the ink hull from
-  // wobbling along the crowded rows.
   const edges: number[] = [];
   for (let t = 0; t < md.idx.length; t += 3) {
     const a = md.idx[t], b = md.idx[t + 1], c = md.idx[t + 2];
-    if (weight[a] > 0.75 || weight[b] > 0.75) edges.push(a, b);
-    if (weight[b] > 0.75 || weight[c] > 0.75) edges.push(b, c);
-    if (weight[c] > 0.75 || weight[a] > 0.75) edges.push(c, a);
+    if (weight[a] > 0.4 || weight[b] > 0.4) edges.push(a, b);
+    if (weight[b] > 0.4 || weight[c] > 0.4) edges.push(b, c);
+    if (weight[c] > 0.4 || weight[a] > 0.4) edges.push(c, a);
   }
   const sum = new Float32Array(n * 3);
   const cnt = new Float32Array(n);
-  for (let pass = 0; pass < 2; pass++) {
+  const accumulate = (): void => {
     sum.fill(0);
     cnt.fill(0);
     for (let e = 0; e < edges.length; e += 2) {
@@ -982,8 +1030,15 @@ export function refineHead(rig: BuiltCharacter, spec = faceSpec(rig.def)): HeadR
       cnt[a]++;
       cnt[b]++;
     }
+  };
+
+  // Pass 1: slide vertices *along* the surface to even the spacing, then snap
+  // back onto it. The sculpt contracts the forehead and grows the occiput by a
+  // couple of cells, and crowded rows make the ink hull wobble.
+  for (let pass = 0; pass < 2; pass++) {
+    accumulate();
     for (let i = 0; i < n; i++) {
-      if (weight[i] < 0.75 || cnt[i] === 0) continue;
+      if (weight[i] < 0.7 || cnt[i] === 0) continue;
       const x = md.pos[i * 3], y = md.pos[i * 3 + 1], z = md.pos[i * 3 + 2];
       form.normal(p.set(x, y, z), g);
       let dx = sum[i * 3] / cnt[i] - x;
@@ -991,9 +1046,9 @@ export function refineHead(rig: BuiltCharacter, spec = faceSpec(rig.def)): HeadR
       let dz = sum[i * 3 + 2] / cnt[i] - z;
       const dn = dx * g.x + dy * g.y + dz * g.z;
       dx -= g.x * dn; dy -= g.y * dn; dz -= g.z * dn;
-      md.pos[i * 3] = x + dx * 0.42;
-      md.pos[i * 3 + 1] = y + dy * 0.42;
-      md.pos[i * 3 + 2] = z + dz * 0.42;
+      md.pos[i * 3] = x + dx * 0.45;
+      md.pos[i * 3 + 1] = y + dy * 0.45;
+      md.pos[i * 3 + 2] = z + dz * 0.45;
       p.set(md.pos[i * 3], md.pos[i * 3 + 1], md.pos[i * 3 + 2]);
       form.project(p, 4, HL * 0.02);
       md.pos[i * 3] = p.x;
@@ -1002,8 +1057,31 @@ export function refineHead(rig: BuiltCharacter, spec = faceSpec(rig.def)): HeadR
     }
   }
 
+  // Pass 2: a plain Laplacian smooth, deliberately *not* re-projected.
+  //
+  // The crease-ink overlay inks from normal and depth discontinuity, so every
+  // sub-5 mm wrinkle the field happens to have — where two primitives meet at a
+  // tight blend radius, where a displacement changed fast between neighbours —
+  // comes back as a black scribble across the cheek at gameplay size. Re-
+  // projecting would restore exactly the curvature that causes it. Two passes at
+  // a quarter weight on a 2.5 mm mesh removes detail below about 5 mm and leaves
+  // the nose, jaw edge and brow untouched.
+  for (let pass = 0; pass < 2; pass++) {
+    accumulate();
+    for (let i = 0; i < n; i++) {
+      const wt = weight[i];
+      if (wt < 0.25 || cnt[i] === 0) continue;
+      const k = 0.26 * Math.min(1, wt);
+      for (let c = 0; c < 3; c++) {
+        md.pos[i * 3 + c] += (sum[i * 3 + c] / cnt[i] - md.pos[i * 3 + c]) * k;
+      }
+    }
+  }
+
   // Normals from the field's own gradient: analytic, so the nose and the jaw
-  // edge come out crisp at any triangle density, and no faceting anywhere.
+  // edge come out crisp at any triangle density, and no faceting anywhere. The
+  // smoothing above moved vertices off the exact level set by well under a
+  // millimetre, which the gradient does not care about.
   for (let i = 0; i < n; i++) {
     const wt = weight[i];
     if (wt <= 0) continue;
@@ -1013,6 +1091,31 @@ export function refineHead(rig: BuiltCharacter, spec = faceSpec(rig.def)): HeadR
     }
     const l = Math.hypot(md.nrm[i * 3], md.nrm[i * 3 + 1], md.nrm[i * 3 + 2]) || 1;
     for (let c = 0; c < 3; c++) md.nrm[i * 3 + c] /= l;
+  }
+
+  // Smooth the shading normals too. They are what the crease pass differentiates,
+  // and the gradient of a smooth-min field turns faster than the surface does.
+  const nsum = new Float32Array(n * 3);
+  for (let pass = 0; pass < 2; pass++) {
+    nsum.fill(0);
+    cnt.fill(0);
+    for (let e = 0; e < edges.length; e += 2) {
+      const a = edges[e], b = edges[e + 1];
+      for (let c = 0; c < 3; c++) {
+        nsum[a * 3 + c] += md.nrm[b * 3 + c];
+        nsum[b * 3 + c] += md.nrm[a * 3 + c];
+      }
+      cnt[a]++;
+      cnt[b]++;
+    }
+    for (let i = 0; i < n; i++) {
+      if (weight[i] < 0.25 || cnt[i] === 0) continue;
+      for (let c = 0; c < 3; c++) {
+        md.nrm[i * 3 + c] += (nsum[i * 3 + c] / cnt[i] - md.nrm[i * 3 + c]) * 0.35;
+      }
+      const l = Math.hypot(md.nrm[i * 3], md.nrm[i * 3 + 1], md.nrm[i * 3 + 2]) || 1;
+      for (let c = 0; c < 3; c++) md.nrm[i * 3 + c] /= l;
+    }
   }
 
   writeMesh(geo, md);

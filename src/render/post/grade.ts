@@ -91,15 +91,36 @@ function normalizedTint(hex: number): RGB {
 /**
  * Pivoted filmic S.
  *
- * Two power segments meeting at `pivot` with matched slope: flat at black, steep
+ * Two segments meeting at `pivot` with matched slope: flat at black, steep
  * through the pivot, flat into white. Monotone for any strength, so it can never
  * invert a gradient — the failure mode of naive `smoothstep` contrast, which
  * flattens exactly the midtones you were trying to steepen.
+ *
+ * ## Why the toe is not a pure power curve
+ *
+ * It was, and that is a large part of how review 002's frame ended up with 35%
+ * of its pixels under L=16. A pure `(x/pivot)^(1+strength)` toe has slope zero
+ * at the origin, so the darker the input the harder it is compressed: at
+ * `strength 0.4` an input of 13/255 came out at 5/255 and everything below it
+ * arrived on top of it. That is not "deep blacks", it is the bottom decade of
+ * the range collapsing into one value, and it takes the cast shadows, the ink
+ * contours and the shadow side of every costume with it.
+ *
+ * `TOE_LINEARITY` blends a straight line back into that segment. The curve keeps
+ * its shape and its contrast through the low midtones — which is where the toe
+ * is actually earning its keep, and which is what an ink line needs in order to
+ * sit darker than the surface it is drawn on — but it now has finite slope at
+ * the origin, so two values a code apart down there stay two values apart.
  */
+const TOE_LINEARITY = 0.35;
+
 function sCurve(x: number, strength: number, pivot: number, shoulder: number): number {
   if (x <= 0) return 0;
   if (x >= 1) return 1;
-  if (x < pivot) return pivot * Math.pow(x / pivot, 1 + strength);
+  if (x < pivot) {
+    const u = x / pivot;
+    return pivot * ((1 - TOE_LINEARITY) * Math.pow(u, 1 + strength) + TOE_LINEARITY * u);
+  }
   // The shoulder is deliberately gentler than the toe. A symmetric S buys its
   // contrast by crushing both ends equally, and the top end is where a fighter's
   // lit side, the rim light and every specular live — losing separation there

@@ -15,7 +15,6 @@ import {
   landmarkY,
   LAYER,
   mergeGeometry,
-  over,
   ramp,
   surfaceCurve,
   torsoAxis,
@@ -26,7 +25,7 @@ import {
 /**
  * Mali — "Eight Limbs", Muay Thai.
  *
- * From `reference/mali/*.jpg`: a dark-green racerback sports bra edged in gold,
+ * From her fourteen design sheets: a dark-green racerback sports bra edged in gold,
  * black satin Muay Thai shorts with red side panels, gold piping and the
  * characteristic flared side split, black compression shorts showing below the
  * hem, red hand wraps and red ankle wraps, barefoot.
@@ -45,8 +44,8 @@ import {
  *   LAYER.skin  0.0035  hand wraps, ankle wraps
  *   0.0047              compression shorts
  *   LAYER.base  0.0090  satin shorts and the red side panels (side by side)
- *   +0.0042             gold piping, riding the seam between them
- *   over(base)  0.0145  waistband
+ *   +0.0040             gold piping, riding the seam between them
+ *   +0.0048             ribbed waistband, over the black panel only
  *   0.0075              sports bra (fitted, so it sits inside LAYER.base)
  */
 
@@ -83,9 +82,33 @@ const shinOf = (side: 'L' | 'R') => (b: BoneName): boolean =>
  */
 const HIPS = (b: BoneName): boolean => b === 'hips' || b === 'spine' || b === 'thighL' || b === 'thighR';
 
+/**
+ * An angle profile that does not stair-step.
+ *
+ * `byAngle` smoothsteps from one stop to the next, and a smoothstep has zero
+ * slope *at* its ends — so every authored stop is a flat spot. On a gentle
+ * profile that is invisible. On this bra's neckline, which climbs eight
+ * centimetres over fifty degrees, each stop becomes a tread and the finished
+ * edge renders as a visible staircase with the gold piping dutifully following
+ * every step. Resampling linearly every few degrees first makes each smoothstep
+ * span too short to read, so the authored shape comes out as one curve.
+ */
+function smoothByAngle(stops: readonly [number, number][], stepDeg = 3): (angle: number) => number {
+  const sorted = [...stops].sort((a, b) => a[0] - b[0]);
+  const dense: [number, number][] = [];
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const [a0, v0] = sorted[i];
+    const [a1, v1] = sorted[i + 1];
+    const n = Math.max(1, Math.round((a1 - a0) / stepDeg));
+    for (let k = 0; k < n; k++) dense.push([a0 + ((a1 - a0) * k) / n, v0 + ((v1 - v0) * k) / n]);
+  }
+  dense.push(sorted[sorted.length - 1]);
+  return byAngle(dense);
+}
+
 /** Angle stops authored for the character's left, mirrored onto the right. */
 function mirrorAngles(stops: readonly [number, number][], sgn: number): (angle: number) => number {
-  return byAngle(stops.map(([d, v]) => [d * sgn, v] as [number, number]));
+  return smoothByAngle(stops.map(([d, v]) => [d * sgn, v] as [number, number]));
 }
 
 export function buildMaliCostume(rig: BuiltCharacter, def: FighterDef): BuiltCostume {
@@ -114,7 +137,7 @@ export function buildMaliCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
  *
  * Everything is built per leg on that leg's own axis. That matters for more than
  * skinning: the red panel, the gold seam that borders it and the waistband that
- * stops against it all have to agree on where "36 degrees round the leg" is, and
+ * stops against it all have to agree on where "forty degrees round the leg" is, and
  * they only do if they were traced from the same axis. Built on a torso axis the
  * waistband would meet the panel at a different world angle at the hip and the
  * piping would drift off the seam.
@@ -137,11 +160,11 @@ function buildShorts(
   // Short: a hand's width below the crotch, which is where the reference puts
   // the front hem. Expressed against the thigh so it lands there on any build.
   const hemFrontY = Y('hip') - (Y('hip') - Y('knee')) * 0.26;
-  const compHemY = hemFrontY - 0.052;
+  const compHemY = hemFrontY - 0.046;
 
   // The seam angles the red panel occupies, measured on the leg axis with 0 at
   // the anatomical front and +90 at the character's left.
-  const SEAM_FRONT = 46;
+  const SEAM_FRONT = 41;
   const SEAM_BACK = 136;
 
   for (const side of ['L', 'R'] as const) {
@@ -238,11 +261,11 @@ function buildShorts(
       name: `compression${side}`,
       geometry: comp.geometry,
       kind: 'cloth',
-      color: 0x111116,
+      color: 0x131318,
       shadowColor: 0x08080c,
       tex: tex.garments.shorts,
-      normalScale: 0.5,
-      specular: 0.26,
+      normalScale: 1.0,
+      specular: 0.3,
     }, out);
 
     // ------------------------------------------------------------- side panel --
@@ -274,11 +297,11 @@ function buildShorts(
       name: `shortSide${side}`,
       geometry: red.geometry,
       kind: 'satin',
-      color: 0x9c2a22,
-      shadowColor: 0x3d0f0d,
+      color: 0xa8302a,
+      shadowColor: 0x4a1210,
       tex: redSatin,
-      normalScale: 0.7,
-      specular: 0.8,
+      normalScale: 1.4,
+      specular: 0.7,
       outlineWidth: 0.8,
     }, out);
 
@@ -306,7 +329,7 @@ function buildShorts(
       // ones. Depth is capped by the cel ramp, not by taste — a fold steeper than
       // about 0.12 in slope swings the terminator far enough to drop a whole
       // shading band as a hard-edged blot.
-      drape: { folds: 6, amplitude: 0.0016, along: 1.6, seed: 5 + (side === 'R' ? 4 : 0), sag: 0.003 },
+      drape: { folds: 8, amplitude: 0.0013, along: 2.2, seed: 5 + (side === 'R' ? 4 : 0), sag: 0.003 },
       keepSide: clip,
       tileMetres: tex.garments.shorts.tileMetres * SATIN,
     });
@@ -317,7 +340,7 @@ function buildShorts(
       color: p.secondary,
       shadowColor: 0x08080b,
       tex: tex.garments.shorts,
-      normalScale: 0.6,
+      normalScale: 1.7,
       specular: 0.95,
       outlineWidth: 0.9,
     }, out);
@@ -352,7 +375,7 @@ function buildShorts(
       color: 0x17171b,
       shadowColor: 0x0a0a0d,
       tex: bandKnit,
-      normalScale: 1.15,
+      normalScale: 1.5,
       specular: 0.18,
       outlineWidth: 0.9,
     }, out);
@@ -376,17 +399,17 @@ function buildShorts(
     attachGarment(rig, {
       name: `shortTrim${side}`,
       geometry: buildBand(piping, {
-        width: 0.0105,
-        thickness: 0.0034,
+        width: 0.0086,
+        thickness: 0.0031,
         sides: 8,
         tileMetres: tex.garments.trim.tileMetres * SATIN,
       }),
       kind: 'satin',
-      color: p.accent,
-      shadowColor: 0x6b520f,
+      color: 0xa17c18,
+      shadowColor: 0x4e3a09,
       tex: tex.garments.trim,
-      specular: 0.85,
-      normalScale: 0.6,
+      specular: 0.38,
+      normalScale: 0.8,
       outlineWidth: 0.5,
     }, out);
   }
@@ -426,40 +449,45 @@ function buildBra(
   const shoulderY = Y('shoulder');
   const chest = Y('chest');
   const hem = Y('hip') + m.torsoLen * 0.45;
-  // How high the cloth may ride on the shoulder. Past the crown of the deltoid a
-  // radial ray leaves the shoulder entirely and the trace runs away up the neck,
-  // so the strap's top edge is pinned to a fraction of the deltoid instead of to
-  // a height, and moves with the fighter's build.
-  const crest = shoulderY + m.deltoidR * 0.72;
-
-  // The top edge, and every decision in the garment is in it.
+  // Where a strap actually crosses this body's shoulder.
   //
-  // It stays *below* the shoulder joint from the sternum out to about 70
-  // degrees, which is what keeps the front of the deltoid bare: the bridge is
-  // still shut down there, so the cloth lies on the ribs behind the hanging arm
-  // instead of climbing onto it. Only across 78 to 102 does the edge jump to the
-  // crown of the shoulder, and that jump is the strap. Let it climb any earlier
-  // and the bra grows a cap sleeve — which is what the first pass did.
+  // Traced, not guessed. The deltoid, trapezius and neck are blended with a
+  // three-centimetre smooth-min, so the shoulder is not a ball with a notch
+  // beside it: the surface climbs continuously from the deltoid point at
+  // y = shoulderY out to the neck at y = neckBase + 0.08. A radial ray reaches
+  // the *top* of that slope only above the neck base — fired at shoulder height
+  // it hits the side of the deltoid, and cloth authored there lands as a patch
+  // stuck on the outside of the arm rather than a strap over the top of it.
+  const crest = m.neckBaseY + m.height * 0.032;
+
+  // The top edge, and every decision in the garment is in it: the scoop
+  // neckline, the armhole, the strap over the shoulder and the racerback yoke
+  // are one continuous curve, exactly as the reference draws the gold piping
+  // that trims them.
   const stops: [number, number][] = [
-    [0, chest + 0.030],
-    [14, chest + 0.042],
-    [28, chest + 0.064],
-    [42, chest + 0.079],
-    [58, chest + 0.088],
-    [70, chest + 0.101],
-    [80, crest - 0.028],
+    // Scoop: nearly flat across the sternum, so it reads as a U and not a V.
+    [0, chest + 0.036],
+    [12, chest + 0.040],
+    [24, chest + 0.057],
+    [36, chest + 0.092],
+    [46, chest + 0.130],
+    [56, crest - 0.068],
+    [68, crest - 0.032],
+    [80, crest - 0.006],
     [90, crest],
-    [100, crest - 0.022],
-    [112, chest + 0.098],
+    [102, crest - 0.010],
+    [116, crest - 0.046],
     // The racerback: a deep armhole scooped out of the back panel, then a yoke
     // that climbs almost to C7 between the shoulder blades.
-    [124, chest + 0.062],
-    [140, chest + 0.098],
-    [158, m.neckBaseY - 0.052],
-    [180, m.neckBaseY - 0.030],
+    [134, chest + 0.055],
+    [150, chest + 0.100],
+    [166, m.neckBaseY - 0.038],
+    [180, m.neckBaseY - 0.022],
   ];
-  const top = byAngle(stops.flatMap(([d, v]) => (d === 0 || d === 180 ? [[d, v]] : [[d, v], [-d, v]]) as [number, number][]));
-  const band = byAngle([
+  const top = smoothByAngle(
+    stops.flatMap(([d, v]) => (d === 0 ? [[d, v]] : [[d, v], [-d, v]]) as [number, number][]),
+  );
+  const band = smoothByAngle([
     [0, hem - 0.005],
     [45, hem + 0.004],
     [90, hem + 0.009],
@@ -470,13 +498,29 @@ function buildBra(
     [-45, hem + 0.004],
   ]);
 
-  // Shut until the shoulder joint itself. Kai's gi opens its bridge just above
-  // the armpit because a gi *has* a cap sleeve; a bra strap does not, and an
-  // early opening lets the cloth wrap the widest part of the deltoid and hang
-  // down the arm.
-  const bridge = (s: number): number => {
+  // The bridge follows the garment's own edge instead of a fixed height, and that
+  // is the whole reason the straps join the cups.
+  //
+  // Kai's gi can open its bridge at one height because its edge is at one height.
+  // This edge is not: it is on the sternum at the front and eight centimetres
+  // higher over the shoulder. Opened at a fixed height, the cloth near the edge
+  // rides the deltoid at the shoulder and stays on the ribs across the front of
+  // it — so the strap and the cup come out as two separate patches of green with
+  // the bare deltoid between them, which is what the fixed version rendered.
+  //
+  // Tying it to `top` states the real rule: the *finished edge* of a sleeveless
+  // garment lies on the outside of whatever it crosses, and the body of the
+  // garment lies on the ribs. Clamped above the armpit so it can never open low
+  // enough to swallow the hanging arm.
+  const bridge = (s: number, _u: number, angle: number): number => {
     const y = axis.pointAt(s).y;
-    return 0.15 * THREE.MathUtils.smoothstep(y, shoulderY - 0.006, shoulderY + 0.042);
+    const edge = top(angle);
+    // Completed a good four centimetres *below* the edge, not at it. The lift is
+    // an either/or per vertex — take the real surface or stay on the ribs — so
+    // wherever the changeover lands it leaves a step, and a step that lands on
+    // the finished edge itself comes out as a sawtooth along the strap.
+    const lo = Math.max(armpit + 0.015, edge - 0.076);
+    return 0.18 * THREE.MathUtils.smoothstep(y, lo, Math.max(lo + 0.015, edge - 0.030));
   };
 
   const shell = buildShell(body, {
@@ -488,7 +532,7 @@ function buildBra(
     offset: 0.0075,
     cloth: 0.0032,
     segments: 26,
-    radial: 76,
+    radial: 100,
     lining: 4,
     follow: TORSO,
     bridge,
@@ -498,7 +542,7 @@ function buildBra(
     maxRadius: m.shoulderHalf + 0.022,
     fromEdge: { fold: 0.014, roll: 0.0052, rings: 4 },
     toEdge: { fold: 0.010, roll: 0.0040, rings: 3 },
-    drape: { folds: 5, amplitude: 0.0008, along: 1.2, seed: 29 },
+    drape: { folds: 5, amplitude: 0.0004, along: 1.2, seed: 29 },
     tileMetres: tex.garments.bra.tileMetres * WEAVE,
   });
   attachGarment(rig, {
@@ -508,8 +552,8 @@ function buildBra(
     // Lifted off the authored dye. Under a four-band ramp the roster's teal lands
     // close enough to the black shorts that the two merge into one dark mass at
     // stage distance, and a bra that vanishes into the shorts loses the midriff.
-    color: 0x27573f,
-    shadowColor: 0x11291f,
+    color: 0x235037,
+    shadowColor: 0x0e2418,
     tex: tex.garments.bra,
     normalScale: 0.55,
     specular: 0.3,
@@ -520,7 +564,7 @@ function buildBra(
   // so they cannot drift off the edge they are trimming.
   const trimParts: THREE.BufferGeometry[] = [
     buildBand(shell.to, {
-      width: 0.0072,
+      width: 0.0074,
       thickness: 0.0028,
       lift: -0.0004,
       closed: true,
@@ -528,8 +572,8 @@ function buildBra(
       tileMetres: tex.garments.trim.tileMetres * SATIN,
     }),
     buildBand(shell.from, {
-      width: 0.0115,
-      thickness: 0.0032,
+      width: 0.0098,
+      thickness: 0.0030,
       lift: -0.0004,
       closed: true,
       sides: 8,
@@ -556,11 +600,11 @@ function buildBra(
     name: 'braTrim',
     geometry: mergeGeometry(trimParts),
     kind: 'satin',
-    color: p.accent,
-    shadowColor: 0x6b520f,
+    color: 0xa17c18,
+    shadowColor: 0x4e3a09,
     tex: tex.garments.trim,
-    specular: 0.85,
-    normalScale: 0.6,
+    specular: 0.38,
+    normalScale: 0.8,
     outlineWidth: 0.5,
   }, out);
 }
@@ -716,26 +760,44 @@ function buildWraps(
       new THREE.Vector3((ankle.x + toe.x) * 0.5, m.ankleY * 0.58, ankle.z + FL * 0.16),
       new THREE.Vector3(toe.x, m.ankleY * 0.4, toe.z + FL * 0.02),
     ]);
-    const footParts: THREE.BufferGeometry[] = [];
-    for (const [station, width] of [[0.20, 0.024], [0.40, 0.018]] as [number, number][]) {
-      footParts.push(
-        buildBand(
-          surfaceCurve(body, {
-            axis: footAxis,
-            samples: 34,
-            s: () => station,
-            // Stops short of the sole: she is barefoot, and tape under the ball of
-            // the foot would show every time a kick turns the sole to camera.
-            angle: (t) => (-126 + t * 252) * DEG,
-            offset: LAYER.skin + 0.0022,
-            front: UP,
-            left: LEFT,
-            follow: footOf(side),
-          }),
-          { width, thickness: 0.0038, sides: 8, tileMetres: tex.wrap.tileMetres * WEAVE },
-        ),
-      );
-    }
+    // Heel, arch and instep as one solid piece rather than a stack of straps: two
+    // ribbons across the foot read as a sandal, which is exactly the wrong thing
+    // to suggest about a barefoot fighter. The arc stops short of the sole, so
+    // nothing shows the moment a kick turns the underside to camera.
+    const instep = buildShell(body, {
+      axis: footAxis,
+      from: 0.0,
+      to: 0.37,
+      offset: LAYER.skin + 0.0018,
+      cloth: 0.0036,
+      segments: 12,
+      radial: 26,
+      lining: 3,
+      arc: [-124 * DEG, 124 * DEG],
+      closed: false,
+      front: UP,
+      left: LEFT,
+      follow: footOf(side),
+      keepSide: { normal: UP, d: 0.0015, softness: 0.0025 },
+      toEdge: { fold: 0.010, roll: 0.0042, rings: 3 },
+      tileMetres: tex.wrap.tileMetres * WEAVE,
+    });
+    const footParts: THREE.BufferGeometry[] = [
+      instep.geometry,
+      buildBand(
+        surfaceCurve(body, {
+          axis: footAxis,
+          samples: 34,
+          s: () => 0.27,
+          angle: (t) => (-114 + t * 228) * DEG,
+          offset: LAYER.skin + 0.0044,
+          front: UP,
+          left: LEFT,
+          follow: footOf(side),
+        }),
+        { width: 0.018, thickness: 0.0038, sides: 8, tileMetres: tex.wrap.tileMetres * WEAVE },
+      ),
+    ];
     wrapPiece(`footWrap${side}`, footParts, `foot${side}` as BoneName);
   }
 }

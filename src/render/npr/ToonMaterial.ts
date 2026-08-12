@@ -1,7 +1,16 @@
 import * as THREE from 'three';
 import type { NPRMaterial, SurfaceKind, ToonMaterialOptions } from './contract';
 import type { ValueBandSpec } from './ramps';
-import { DEFAULT_SKY, bandRamp, coolShadow, coreShadowTint, fitValueBand, inkColor, warmth } from './ramps';
+import {
+  DEFAULT_SKY,
+  bandRamp,
+  bounceColor,
+  coolShadow,
+  coreShadowTint,
+  fitValueBand,
+  inkColor,
+  warmth,
+} from './ramps';
 
 /**
  * The NPR surface shader.
@@ -104,9 +113,20 @@ interface KindPreset {
   coreDepth: number;
   /** Value of the shadow plane. Near 0 = the terminator is a colour change. */
   shadowLevel: number;
+  /** Value of the deep / occlusion plane, below the core edge. */
+  deepLevel: number;
   /** Value of the main lit plane; the headroom above it belongs to form bands. */
   litLevel: number;
-  /** Half-lambert wrap: how far past the geometric terminator light carries. */
+  /**
+   * Half-lambert wrap: how far past the geometric terminator light carries.
+   *
+   * With the cast shadow now separated from the form shading (see the fragment
+   * shader), this number does a job it could not do before: it decides how much
+   * of the ramp the *dark side* gets. At 0.07 everything past N·L = −0.07 landed
+   * on ramp coordinate 0, so the four bands had three quarters of their range
+   * sitting on a quarter of the form. `toe` is set alongside it to keep the drawn
+   * terminator at the N·L the lighting rig was tuned against.
+   */
   wrap: number;
   /** Contrast trim on the ramp coordinate, applied before the lookup. */
   shadeGain: number;
@@ -134,16 +154,57 @@ interface KindPreset {
   translucency: number;
   /** Self-shadow strength driven by normal-map creases. */
   curvature: number;
+  /**
+   * Occlusion driven by *geometric* concavity, measured in the shader from the
+   * divergence of the interpolated normal. This is the term that puts a band
+   * under a pectoral and in an armpit on a mesh with no normal map.
+   */
+  cavity: number;
+  /** World scale of the cavity measurement, in metres of radius. */
+  cavityScale: number;
   terminatorNoise: number;
   noiseScale: number;
   ambient: number;
   /** How much the stage light's hue tints the costume. Low keeps it on-model. */
   lightTint: number;
   exposureResponse: number;
+  /**
+   * How much of the exposure response reads the rig *unshadowed*. 1 makes it the
+   * stage-brightness dial it is documented as; 0 restores the old behaviour where
+   * it doubled as a second shadow multiplier stacked on the ramp.
+   */
+  exposureUnshadowed: number;
+  /**
+   * How much of a missing key light is charged as a cast shadow. 1 reproduces the
+   * single-accumulator model exactly; below 1 keeps a cast shadow readable as a
+   * shadow rather than as a hole.
+   */
+  castDepth: number;
+  /** N·L above which a surface counts as facing the key, for the cast term. */
+  castFacing: number;
+  /** Strength of the reflected-light band. */
+  bounce: number;
+  /** Key N·L below which the reflected-light band starts. */
+  bounceEdge: number;
+  /** Widest the bounce edge may antialias, in N·L. */
+  bounceSoft: number;
+  /** Lightness of the bounce colour, as a fraction of the lit surface's own. */
+  bounceLevel: number;
   outlineWidth: number;
   /** Multipliers on the default shadow hue rotation and value for this surface. */
   shadowShift: number;
   shadowValue: number;
+  /**
+   * Multiplier on chroma going into shadow, and the chroma floor added to
+   * near-neutrals. Above 1 means the shadow is *more* saturated than the lit
+   * plane, which is what a painter does on skin and what the budget's "shadow
+   * saturation drop < 15 points" row is asking for. It is safe now in a way it was
+   * not when `coolShadow` was tuned by constants: the function measures its own
+   * output's warmth and keeps mixing skylight until the shadow is provably cooler,
+   * so pushing chroma up cannot bring the temperature separation back down.
+   */
+  shadowSat: number;
+  shadowSatLift: number;
   /** How far the highlight colour is pulled to white. Pure white reads as vinyl. */
   specTint: number;
 
@@ -203,6 +264,7 @@ const BASE: KindPreset = {
   terminatorWidth: 0.055,
   coreDepth: 0.42,
   shadowLevel: 0.14,
+  deepLevel: 0,
   litLevel: 0.88,
   wrap: 0.08,
   shadeGain: 1.08,
@@ -225,14 +287,25 @@ const BASE: KindPreset = {
   sss: 0,
   translucency: 0,
   curvature: 0,
+  cavity: 0,
+  cavityScale: 0.012,
   terminatorNoise: 0.01,
   noiseScale: 22,
   ambient: 0.5,
   lightTint: 0.35,
   exposureResponse: 0.55,
+  exposureUnshadowed: 1,
+  castDepth: 0.8,
+  castFacing: 0.22,
+  bounce: 0,
+  bounceEdge: -0.3,
+  bounceSoft: 0.05,
+  bounceLevel: 0.3,
   outlineWidth: 1,
   shadowShift: 1,
   shadowValue: 1,
+  shadowSat: 0.86,
+  shadowSatLift: 0.1,
   specTint: 0.35,
 
   skylight: 0.12,
@@ -275,21 +348,70 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
   // So: three bands (light plane, shadow plane, form shadow), razor sharpness,
   // wrap down from 0.24 to 0.07, and `specular: 0`.
   skin: {
-    bands: 3,
+    // Four bands, and the reason is review 002's single highest-leverage note:
+    // "KOF XIII's look is hard-edged bands, plural, four deep. You removed the
+    // soft ramp and did not replace it with anything. Hardness without banding is
+    // not progress toward the reference, it is flat fill with a crisp border."
+    //
+    // Reading up the ramp: occlusion, shadow, half-light, light-side form, light
+    // — plus the reflected-light band, which is not a ramp band at all because it
+    // is keyed to geometry rather than to accumulated light (see `bounce` below).
+    //
+    // Five, not four, and the fifth is on the *lit* side because that is where the
+    // flat fill was. Measured on the first pass of this rewrite: the shadow read
+    // correctly at 0.64 of the lit plane, but the lit side was one band holding
+    // half the body, so the top histogram bin barely moved. A painted figure has
+    // as much structure in its light as in its dark.
+    bands: 5,
     sharpness: 1,
-    // Dropping `wrap` from 0.24 to 0.07 moves the terminator round the form:
-    // with the key carrying 74% of the rig's reference, the old 0.34 toe landed
-    // at N·L 0.33 while an unchanged toe would have put it at 0.45 — measured on
-    // the first pass as a shadow covering roughly half of every torso. A fighter
-    // reads as *mostly lit with a decisive shadow shape*, so the toe comes down
-    // to put the edge back at N·L 0.30.
-    toe: 0.27,
-    coreDepth: 0.46,
-    // Almost pure shadow colour on the dark side. The terminator has to be a
-    // change of colour and temperature, not a dimming, or it reads as a render.
+    // `toe` and `wrap` are one decision, not two. `wrap` decides how much of the
+    // ramp the dark side gets; `toe` puts the drawn terminator back where the
+    // lighting rig was tuned for it. With the rig's key holding 0.85 of the shade
+    // reference, the ramp coordinate is
+    //
+    //     x = keyShare · (N·L + wrap) / (1 + wrap)   =   0.5 · (N·L + 0.7)
+    //
+    // and the whole dark side, from N·L = −0.7 up to the terminator, now spreads
+    // across half the ramp instead of being slammed onto coordinate 0.
+    //
+    // The terminator moves from N·L 0.27 to 0.36. Review 002 measured the shadow
+    // band covering 11.7% of Davi's body and called that out; on this rig's key —
+    // 38° off axis and 44° up — 0.27 puts the shadow on a quarter of a limb's
+    // projected width and 0.36 puts it on a third, which is the proportion a KOF
+    // XIII sprite carries. `lighting.ts` reads SKIN_RAMP_TOE = 0.27 to bound the
+    // rim weight; the true toe being higher only makes that bound conservative.
+    toe: 0.53,
+    // Core edge at N·L = −0.20: the outer edge of the shadow side plus every
+    // downward-facing plane. That is where a painter's occlusion actually is.
+    coreDepth: 0.472,
+    // The five rendered values, as a fraction of the lit plane, with the shadow
+    // colour sitting at ~0.56 of the albedo's luminance:
+    //
+    //   light        1.00                      ~26% of a limb's width
+    //   form         0.92   (auto, midway)     ~29%
+    //   half-light   0.84   (litLevel 0.61)    ~14%
+    //   shadow       0.63   (shadowLevel 0.10) ~27%
+    //   occlusion    0.38   (deepLevel 0, then coreShadowTint)  ~4%, plus cavity
+    //
+    // The terminator, 0.84 -> 0.66, is twice the largest lit-side step *and* it is
+    // the only edge that changes hue — orange to plum, a 37° rotation — so it is
+    // still unmistakably the one edge the eye reads first. That was review 001's
+    // objection to evenly-weighted bands and it still holds; what did not hold was
+    // the conclusion that the answer is fewer bands.
+    // Only a tenth of the lit colour mixed into the shadow plane. The value comes
+    // from the shadow *colour* being light enough to stand on its own; mixing the
+    // albedo back in to raise it would halve the hue rotation and cost chroma,
+    // which is the trade the first pass of this rewrite measured and lost.
     shadowLevel: 0.1,
-    terminatorWidth: 0.042,
-    wrap: 0.07,
+    deepLevel: 0,
+    litLevel: 0.61,
+    shoulder: 0.69,
+    // The ramp coordinate is its own quantity now, not a lightly-trimmed N·L;
+    // biasing it would move the terminator off the angle the rig was solved for.
+    shadeGain: 1,
+    shadeBias: 0,
+    terminatorWidth: 0.05,
+    wrap: 0.7,
     // Deleted. A round soft gaussian on skin is the loudest "3D render" tell
     // after the halo — it turned Mali into a wax figure and Davi into a
     // chocolate figurine. Sweat sheen, when it exists, belongs in a VFX pass
@@ -318,6 +440,30 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     rimEdge: 0.6,
     rimSoft: 0.045,
     rimShadow: 0.75,
+    // The anatomy the bands land on. Everything the review listed as missing —
+    // pectoral, ribcage, abdominal, deltoid, iliac, calf — is a *concavity* on
+    // this mesh: the lower border of the pec, the seam where the deltoid meets it,
+    // the arch of the ribcage, the crease over the hip. N·L on a smooth implicit
+    // body barely registers any of them; the divergence of its own normal
+    // registers all of them, and pushes exactly those pixels across a band edge.
+    cavity: 0.22,
+    cavityScale: 0.02,
+    // A body's cast shadows are its own arm across its own ribs, at arm's length.
+    // Charged in full they punch through to the occlusion band and read as the
+    // "bird-shaped amoeba" the review found on Mali's torso; at 0.7 they land on
+    // the shadow plane, which is where a drawn one sits.
+    castDepth: 0.7,
+    castFacing: 0.25,
+    // Reflected light. The threshold is set against what a *vertical* form can
+    // reach: this key is 44° up, so its horizontal component only takes N·L to
+    // −0.44 at the silhouette of a limb, and a −0.32 edge (tried first) put the
+    // band inside the last 1% of the width, underneath the ink. −0.16 is the outer
+    // ~5% of a limb's projected width, plus every downward-facing plane — jaw,
+    // pectoral, forearm, calf — which is the run a painter inks the bounce along.
+    bounce: 0.9,
+    bounceEdge: -0.16,
+    bounceSoft: 0.05,
+    bounceLevel: 0.5,
     terminatorNoise: 0.007,
     noiseScale: 26,
     // Trimmed because the ambient lift is multiplicative on the hemisphere's
@@ -329,11 +475,21 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     lightTint: 0.24,
     outlineWidth: 0.9,
     // Flesh shadow goes plum rather than straight to blue — blood under the
-    // skin, not skylight on top of it. The old 0.5 multiplier on an already
-    // modest 0.17 rotation came to 30°, which measured as no rotation at all.
-    shadowShift: 0.78,
+    // skin, not skylight on top of it.
+    //
+    // Raised from 0.78 to buy the rotation back from `shadowLift` rather than from
+    // sky-mixing. A hue *rotation* costs no chroma; mixing 30% of a pale sky into
+    // a plum costs a lot of it, and the measured saturation drop into shadow was
+    // 30 points against a budget of 15. Same temperature separation, a third of
+    // the chroma loss — and it widens the roster's shadow spread as a side effect,
+    // because four hues rotated further apart are further apart.
+    shadowShift: 0.95,
     skylight: 0.11,
-    accentShadow: 0.11,
+    // Held low on purpose now that the reflected-light band carries the accent.
+    // Pushed harder it un-cools the shadow — measured at 0.18 on the roster's
+    // rim hexes, three of which are warm cream, Davi's hue rotation fell to −19.7°
+    // and Mali's to −26.2°, i.e. straight out of the budget's −25..−65 window.
+    accentShadow: 0.08,
     minCool: 0.16,
     // The load-bearing term, and the reason it is this high. A stage rig is not
     // this module's to control: the bootstrap rig gained a warm bounce lamp
@@ -344,26 +500,63 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     // term anywhere in the rig will find the shadow. This tint is applied after
     // the ramp and keyed to the shadow band, so it is the one cooling term no
     // lamp can outvote.
-    shadowLift: 0.38,
-    coreTint: 1.15,
+    // Cut from 0.38. Chroma, not temperature, is what this term was costing: it
+    // mixes a pale desaturated sky into the shadow band at constant luminance, and
+    // at 0.38 that was most of the 30-point saturation collapse the budget flags.
+    // The rotation it was buying comes from `shadowShift` instead, which is free.
+    shadowLift: 0.14,
+    // Up from 1.15, not down. The occlusion band's *value* has to come from
+    // somewhere: with `deepLevel` at 0 the band renders at the shadow colour's own
+    // ~0.59 of lit, and only this multiplier takes it to the 0.40 the budget asks
+    // for. It carries the hue shift too — deep shadow losing red because bounced
+    // sky is the only light left down there.
+    coreTint: 1.5,
     aaClamp: 0.012,
     specTint: 0.55,
-    // Defect 4. Davi's lit chest measured V44 against Vera's and Kai's shadows
-    // at V60/V61, and Mali clipped her red channel outright. Compressed rather
-    // than clamped, so Kai and Vera — whose skin hexes are 2° apart in hue and
-    // separate mainly on value and chroma — do not collapse onto each other.
-    litBand: { min: 0.42, max: 0.55, slope: 0.3, chromaKnee: 0.52, chromaSlope: 0.45 },
-    shadowBand: { min: 0.15, max: 0.26, slope: 0.35, chromaKnee: 0.44, chromaSlope: 0.4 },
+    // Defect 4, restated. The first pass compressed both bands so hard that it
+    // traded one review defect for the next one: a 0.11-wide shadow band put all
+    // four fighters' shadows inside 0.11 of lightness, at the dark end where RGB
+    // distances are small anyway, and the measured pairwise shadow-colour distance
+    // collapsed to 7.7-16.4 against a budget of 40. **Value spread is the only
+    // axis this roster has** — the four skin hexes span 16° of hue with Kai and
+    // Vera 2° apart — so squeezing value is squeezing character identity.
+    //
+    // Both bands are widened and lifted. Measured on the CPU pipeline across the
+    // roster: lit spread 0.39-0.59 -> 0.38-0.64, shadow spread 0.15-0.26 ->
+    // 0.30-0.52, shadow/lit luminance 0.31-0.36 -> 0.51-0.59, minimum pairwise
+    // shadow distance 9.2 -> 13.9 before the costumes and hair are counted.
+    litBand: { min: 0.42, max: 0.64, slope: 0.55, chromaKnee: 0.62, chromaSlope: 0.55 },
+    shadowBand: { min: 0.33, max: 0.55, slope: 0.6, chromaKnee: 0.9, chromaSlope: 0.6 },
+    // 0.44 x 1.75 = 0.77. The shadow *colour* has to sit near 0.59 of the lit
+    // albedo's luminance or no ramp value can produce a 0.63 shadow band without
+    // mixing so much lit colour back in that the hue rotation is halved.
+    shadowValue: 1.75,
+    // Chroma *up* into shadow. Measured across the roster on the CPU pipeline:
+    // 0.86 gave a 4.2-12.2 point drop before the shader's own cool terms took
+    // another ~17 on top, which is how the frame read a 30-point collapse; 1.10
+    // lands the shadow 2 points below to 5 points *above* the lit plane and leaves
+    // the shader's losses somewhere to land. Hue rotation is unaffected — measured
+    // −37° to −53° at both settings, because `coolShadow` verifies it.
+    shadowSat: 1.1,
+    shadowSatLift: 0.04,
   },
 
   // Hair reads as a solid shape with one banded highlight travelling round it.
-  // Two bands only: anime hair has a light side and a dark side, full stop.
+  // Anime hair has a light side and a dark side — and, under both, a core where
+  // the mass turns away, which is the band that stops a bob reading as a helmet.
   hair: {
-    bands: 2,
+    bands: 3,
     sharpness: 1,
-    toe: 0.44,
-    shadowLevel: 0.08,
-    wrap: 0.06,
+    // Terminator at N·L 0.35, core at −0.25, over a 0.5 wrap.
+    toe: 0.482,
+    coreDepth: 0.294,
+    shadowLevel: 0.16,
+    deepLevel: 0,
+    shadowValue: 1.35,
+    shadowSat: 0.95,
+    shadowSatLift: 0.08,
+    wrap: 0.5,
+    castDepth: 0.75,
     // Kept, because Kajiya-Kay is already a *band* across the strand rather than
     // a round lobe — the thing the review objected to. The sheen halo comes down
     // so the band has a hard outer edge instead of fading into chrome.
@@ -391,10 +584,23 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
   // Matte fabric. The whole read is the shadow *shape*, so the edges are crisp
   // and the highlight is a wash with no hard core at all.
   cloth: {
-    bands: 3,
+    bands: 4,
     sharpness: 0.97,
-    wrap: 0.05,
-    shadowLevel: 0.13,
+    // Terminator at N·L 0.22, core at −0.25, half-light edge at 0.62, wrap 0.6.
+    toe: 0.436,
+    coreDepth: 0.427,
+    shoulder: 0.648,
+    wrap: 0.6,
+    shadowLevel: 0.26,
+    deepLevel: 0.04,
+    litLevel: 0.8,
+    shadowValue: 1.5,
+    shadowSat: 1.0,
+    shadowSatLift: 0.06,
+    cavity: 0.07,
+    castDepth: 0.75,
+    bounce: 0.34,
+    bounceLevel: 0.28,
     specular: 0.05,
     specPower: 22,
     specThreshold: 0.24,
@@ -416,14 +622,23 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
   quilted: {
     bands: 4,
     sharpness: 0.9,
-    toe: 0.3,
-    shoulder: 0.82,
-    wrap: 0.1,
+    // Terminator at N·L 0.18, core at −0.25, half-light edge at 0.60, wrap 0.6.
+    toe: 0.414,
+    coreDepth: 0.449,
+    shoulder: 0.638,
+    wrap: 0.6,
     // Padding is the one surface that genuinely wants its bands closer together:
     // each puff carries its own small gradient over a dominant terminator.
-    shadowLevel: 0.2,
+    shadowLevel: 0.32,
+    deepLevel: 0.08,
     litLevel: 0.78,
-    shadeGain: 1.16,
+    shadowValue: 1.5,
+    shadowSat: 1.0,
+    shadowSatLift: 0.06,
+    shadeGain: 1,
+    castDepth: 0.75,
+    bounce: 0.3,
+    bounceLevel: 0.26,
     specular: 0.09,
     specPower: 26,
     specThreshold: 0.24,
@@ -442,11 +657,20 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
   // Muay thai shorts: a sharp anisotropic glint banded across the drape over a
   // near-black base. That glint is most of what makes satin read as satin.
   satin: {
-    bands: 3,
+    bands: 4,
     sharpness: 0.98,
-    toe: 0.3,
-    wrap: 0.03,
-    shadowLevel: 0.1,
+    // Terminator at N·L 0.30, core at −0.25, half-light edge at 0.65, wrap 0.5.
+    toe: 0.453,
+    coreDepth: 0.313,
+    shoulder: 0.652,
+    wrap: 0.5,
+    shadowLevel: 0.2,
+    deepLevel: 0.02,
+    litLevel: 0.82,
+    shadowValue: 1.35,
+    castDepth: 0.78,
+    bounce: 0.3,
+    bounceLevel: 0.24,
     specular: 0.95,
     specPower: 150,
     specThreshold: 0.12,
@@ -465,10 +689,20 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
   },
 
   leather: {
-    bands: 3,
+    bands: 4,
     sharpness: 0.95,
-    wrap: 0.05,
-    shadowLevel: 0.12,
+    // Terminator at N·L 0.25, core at −0.25, half-light edge at 0.65, wrap 0.55.
+    toe: 0.439,
+    coreDepth: 0.375,
+    shoulder: 0.658,
+    wrap: 0.55,
+    shadowLevel: 0.22,
+    deepLevel: 0.02,
+    litLevel: 0.8,
+    shadowValue: 1.4,
+    castDepth: 0.78,
+    bounce: 0.3,
+    bounceLevel: 0.24,
     specular: 0.46,
     specPower: 90,
     specThreshold: 0.18,
@@ -489,11 +723,22 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
   // Tape stays the softest terminator in the set — the weave really does scatter
   // that much — but 0.34 of wrap was enough to erase the edge entirely.
   wrap: {
-    bands: 3,
+    bands: 4,
     sharpness: 0.9,
-    toe: 0.4,
-    wrap: 0.22,
-    shadowLevel: 0.22,
+    // Terminator at N·L 0.25, core at −0.30, half-light edge at 0.60, wrap 0.8.
+    toe: 0.496,
+    coreDepth: 0.476,
+    shoulder: 0.661,
+    wrap: 0.8,
+    shadowLevel: 0.32,
+    deepLevel: 0.1,
+    litLevel: 0.84,
+    shadowValue: 1.5,
+    shadowSat: 0.95,
+    shadowSatLift: 0.08,
+    castDepth: 0.75,
+    bounce: 0.28,
+    bounceLevel: 0.26,
     specular: 0.07,
     specPower: 24,
     specThreshold: 0.26,
@@ -514,9 +759,13 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
   metal: {
     bands: 2,
     sharpness: 1,
-    toe: 0.42,
-    wrap: 0,
-    shadowLevel: 0.06,
+    // Terminator at N·L 0.35, wrap 0.35. Two bands stays right for metal: what
+    // makes it read is the highlight, not a value hierarchy.
+    toe: 0.441,
+    wrap: 0.35,
+    shadowLevel: 0.1,
+    shadowValue: 1.2,
+    castDepth: 0.85,
     specular: 1,
     specPower: 190,
     specThreshold: 0.1,
@@ -572,6 +821,15 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     terminatorNoise: 0.005,
     noiseScale: 6,
     exposureResponse: 0.8,
+    // Pinned. Both of these restore the pre-review-002 shading path exactly for
+    // the stage: the exposure response keeps reading the light that arrives, and a
+    // cast shadow is charged in full the instant a surface faces the key at all,
+    // so `shade` reduces to the old single accumulator. Stage look belongs to
+    // `art/stages`, and a shading change that quietly relit the backdrop is
+    // precisely the cross-system accident FRAME_BUDGET.md exists to prevent.
+    exposureUnshadowed: 0,
+    castDepth: 1,
+    castFacing: 0.02,
     outlineWidth: 0,
     shadowValue: 1.15,
     specTint: 0.21,
@@ -671,6 +929,7 @@ uniform vec3 uSSSColor;
 uniform vec3 uRimColor;
 uniform vec3 uSpecColor;
 uniform vec3 uSkyColor;
+uniform vec3 uBounceColor;
 uniform float opacity;
 
 uniform sampler2D uRamp;
@@ -708,7 +967,16 @@ uniform float uAmbient;
 uniform float uLightTint;
 uniform float uLightReference;
 uniform float uExposureResponse;
+uniform float uExposureUnshadowed;
 uniform float uSaturation;
+
+uniform float uCastDepth;
+uniform float uCastFacing;
+uniform float uCavity;
+uniform float uCavityScale;
+uniform float uBounce;
+uniform float uBounceEdge;
+uniform float uBounceSoft;
 
 uniform float uLightingScale;
 uniform vec3  uFlashColor;
@@ -878,10 +1146,53 @@ void main() {
   float totalLum = nprLum( totalLight );
   float reference = max( uLightReference, 1e-4 );
 
-  // Normalising against the *un-shadowed* rig, not against what happens to
-  // arrive, is what makes a cast shadow actually land in the shadow band
-  // instead of the fill and rim silently filling it back in.
-  float shade = nprLum( reflectedLight.directDiffuse ) / reference;
+  // Light that arrives, attenuated by the shadow maps. This is what the shading
+  // coordinate used to be, on its own.
+  float litShade = nprLum( reflectedLight.directDiffuse ) / reference;
+
+  // Light the *geometry* is entitled to, shadow maps ignored — plus the
+  // strongest lamp's raw N·L, which is the key by definition.
+  //
+  // ## Why this exists (review 002's "put the bands back")
+  //
+  // With one accumulator, a surface turned away from the key was darkened twice:
+  // once because its own N·L is negative, and again because the key's shadow map
+  // cannot see it either. The second darkening is not a cast shadow, it is the
+  // same fact counted a second time — and because the shadow map is binary, it
+  // slammed the *entire* dark side onto the very bottom of the ramp regardless of
+  // how the form was turned. That is why every band edge below the terminator had
+  // nothing to land on and the shadow rendered as one flat hole: 48.5% of Mali in
+  // a single 8-L bin with a 70-unit void underneath it.
+  //
+  // So form shading comes from the geometry, and the shadow map is applied
+  // *separately*, gated on the surface actually facing the key. A limb's far side
+  // now keeps a real gradient for the bands to bite on; an arm's shadow thrown
+  // across a chest that does face the key still drops it into the occlusion band.
+  float geoDirect = 0.0;
+  float rigLum = 0.0;
+  float keyNdl = 1.0;
+  float keyWeight = 0.0;
+  #if NUM_DIR_LIGHTS > 0
+    for ( int i = 0; i < NUM_DIR_LIGHTS; i ++ ) {
+      float w = nprLum( directionalLights[ i ].color );
+      float ndl = dot( normal, directionalLights[ i ].direction );
+      geoDirect += w * w * saturate( ( ndl + uWrap ) / ( 1.0 + uWrap ) );
+      rigLum += w * w;
+      if ( w > keyWeight ) { keyWeight = w; keyNdl = ndl; }
+    }
+    float geoShade = geoDirect / reference;
+  #else
+    float geoShade = litShade;
+    rigLum = reference;
+  #endif
+
+  // How much of the light this surface should be getting never arrived. Gated on
+  // facing the key so that self-shadowing — which geoShade has already
+  // described — cannot be charged a second time.
+  float occluded = saturate( ( geoShade - litShade ) / max( geoShade, 1e-3 ) );
+  occluded *= smoothstep( 0.0, uCastFacing, keyNdl );
+  float shade = geoShade - occluded * uCastDepth * ( geoShade - litShade );
+
   // Faded out when there is barely any direct light, or an ambient-only stage
   // would tint every costume toward a hue derived from nothing.
   float hueTrust = uLightTint * smoothstep( 0.0, 0.02, totalLum );
@@ -891,6 +1202,23 @@ void main() {
   // itself at the seams reads as a printed pattern, not as padding.
   float crease = saturate( ( 1.0 - dot( normal, nonPerturbedNormal ) ) * 3.5 );
   shade -= crease * uCurvature;
+
+  // Cavity, in inverse world units, from the divergence of the geometric normal.
+  // Positive curvature is a ridge and is left alone — a body is convex nearly
+  // everywhere, so lifting ridges just lifts the whole figure. Concavity is the
+  // half that carries anatomy: the pectoral's lower border, the deltoid seam, the
+  // armpit, the iliac crease, the hollow behind the knee. Review 002's complaint
+  // that "there is no pectoral, ribcage, abdominal, deltoid, iliac or calf shading
+  // anywhere" is a complaint that the ramp had nothing but N·L to bite on; this is
+  // the term that gives it the landmarks.
+  if ( uCavity > 0.0 ) {
+    vec3 vPos = - vViewPosition;
+    vec3 dpx = dFdx( vPos );
+    vec3 dpy = dFdy( vPos );
+    float k = dot( dFdx( nonPerturbedNormal ), dpx ) / max( dot( dpx, dpx ), 1e-9 )
+            + dot( dFdy( nonPerturbedNormal ), dpy ) / max( dot( dpy, dpy ), 1e-9 );
+    shade -= saturate( - k * uCavityScale ) * uCavity;
+  }
 
   // Nobody draws a mathematically smooth terminator. A little breakup on the
   // ramp coordinate is the cheapest brush in the box.
@@ -930,6 +1258,26 @@ void main() {
   // The core keeps losing red as it deepens, because down there bounced sky is
   // the only light left.
   col *= mix( vec3( 1.0 ), uCoreTint, ramp.b );
+
+  // Reflected light: the narrow, saturated band along the far edge of the form.
+  //
+  // Keyed to the *geometric* N·L of the key rather than to the ramp, for one
+  // reason: an arm's cast shadow falling on a chest that still faces the key must
+  // not get it. Reflected light is a fact about which way a surface points, not
+  // about how much light reached it, and the two only look the same until
+  // something casts a shadow across a lit plane.
+  //
+  // Hard-edged against its own screen derivative, like every other edge here. A
+  // soft bounce is a Fresnel wash, and a Fresnel wash is the cheapest-looking
+  // term in real-time NPR.
+  if ( uBounce > 0.0 ) {
+    float bounceAa = max( min( fwidth( keyNdl ) * 0.5, uBounceSoft ), 0.002 );
+    float bounce = smoothstep( uBounceEdge + bounceAa, uBounceEdge - bounceAa, keyNdl );
+    // Scaled by the surface's own lightness for the same reason the subsurface
+    // term is: a fixed additive lands as a blown-out stripe on the darkest
+    // fighter and as nothing at all on the lightest.
+    col += uBounceColor * bounce * uBounce * ( 0.4 + 0.6 * nprLum( base ) );
+  }
 
   // Subsurface: light that entered on the lit side and left through the
   // terminator — precisely where a painter lays the warm line on skin.
@@ -993,7 +1341,16 @@ void main() {
 
   // A dark stage should dim the fighters, but only partway: losing them into
   // the backdrop during a super is worse than being physically wrong.
-  col *= mix( 1.0, saturate( sqrt( totalLum / reference ) ), uExposureResponse );
+  //
+  // Which exposure, though, matters more than the strength. Fed the light that
+  // *arrives*, this term is a second shadow multiplier stacked on top of the ramp
+  // — measured on the shipping frame it took another 30% off every shadow band,
+  // and it is a large part of why the shadow/lit ratio read 0.14-0.27 instead of
+  // the 0.6-0.75 a painted fighter has. The dial is meant to answer "how bright is
+  // this stage", which is a property of the rig, so surfaces that care about their
+  // band structure read the rig unshadowed and leave the shadow shapes to the ramp.
+  float exposureLum = mix( totalLum, rigLum, uExposureUnshadowed );
+  col *= mix( 1.0, saturate( sqrt( exposureLum / reference ) ), uExposureResponse );
   col *= uLightingScale;
 
   // Chroma is expanded ahead of tone mapping because ACES desaturates as it
@@ -1070,6 +1427,8 @@ function deriveShadow(
   const shadow = coolShadow(seed, {
     shift: 0.24 * p.shadowShift,
     value: 0.44 * p.shadowValue,
+    satGain: p.shadowSat,
+    satLift: p.shadowSatLift,
     skylight: p.skylight,
     skyColor: NPR_TUNING.skyColor,
     accent,
@@ -1131,7 +1490,16 @@ export class ToonMaterial extends THREE.ShaderMaterial implements NPRMaterial {
     // already-darkened swatch, and then conditioned for temperature.
     const seed = opts.shadowColor ? matchLightness(new THREE.Color(opts.shadowColor), color) : color.clone();
     const accentAmount = p.accentShadow;
-    const shadow = deriveShadow(color, seed, p, null, accentAmount);
+
+    // The accent defaults to the surface's own rim hex — `palette.rim`, which is
+    // the one per-fighter colour every caller already passes. `setShadowAccent`
+    // still overrides it, and `palette.energy` is the better swatch (Vera orange,
+    // Mali red, Davi and Kai two different blues) the day the character builder
+    // wires it; this default means the reflected-light band carries *some*
+    // identity today rather than none.
+    const accent = opts.rimColor != null ? new THREE.Color(opts.rimColor) : null;
+    const shadow = deriveShadow(color, seed, p, accent, accentAmount);
+    const bounce = bounceColor(accent ?? color, color, p.bounceLevel);
 
     // The highlight takes its colour from the surface it sits on, pulled toward
     // white by the surface's glossiness. A white highlight on everything is what
@@ -1161,6 +1529,7 @@ export class ToonMaterial extends THREE.ShaderMaterial implements NPRMaterial {
           uRimColor: { value: new THREE.Color(opts.rimColor ?? 0xffd3a8) },
           uSpecColor: { value: spec },
           uSkyColor: { value: NPR_TUNING.skyColor.clone() },
+          uBounceColor: { value: bounce },
           opacity: { value: 1 },
 
           uRamp: { value: null },
@@ -1191,6 +1560,13 @@ export class ToonMaterial extends THREE.ShaderMaterial implements NPRMaterial {
           uSSS: { value: p.sss },
           uTranslucency: { value: p.translucency },
           uCurvature: { value: p.curvature },
+          uCavity: { value: p.cavity },
+          uCavityScale: { value: p.cavityScale },
+          uCastDepth: { value: p.castDepth },
+          uCastFacing: { value: p.castFacing },
+          uBounce: { value: p.bounce },
+          uBounceEdge: { value: p.bounceEdge },
+          uBounceSoft: { value: p.bounceSoft },
           uTerminatorNoise: { value: p.terminatorNoise },
           uNoiseScale: { value: p.noiseScale },
           uAaClamp: { value: p.aaClamp },
@@ -1199,6 +1575,7 @@ export class ToonMaterial extends THREE.ShaderMaterial implements NPRMaterial {
           uLightTint: { value: p.lightTint },
           uLightReference: { value: NPR_TUNING.lightReference },
           uExposureResponse: { value: p.exposureResponse },
+          uExposureUnshadowed: { value: p.exposureUnshadowed },
           uSaturation: { value: NPR_TUNING.saturation },
 
           uLightingScale: { value: 1 },
@@ -1233,6 +1610,7 @@ export class ToonMaterial extends THREE.ShaderMaterial implements NPRMaterial {
       terminatorWidth: p.terminatorWidth,
       core: p.coreDepth,
       shadowLevel: p.shadowLevel,
+      deepLevel: p.deepLevel,
       litLevel: p.litLevel,
     });
     this.uniforms.uMap.value = opts.map ?? null;
@@ -1298,6 +1676,12 @@ export class ToonMaterial extends THREE.ShaderMaterial implements NPRMaterial {
     const shadow = deriveShadow(this.litColor, this.shadowSeed.clone(), this.p, this.accent, this.accentAmount);
     (this.uniforms.uShadowColor.value as THREE.Color).copy(shadow);
     (this.uniforms.uCoreTint.value as THREE.Color).copy(coreShadowTint(shadow, this.p.coreTint));
+    // The reflected-light band follows the accent too — that band is the loudest
+    // place the accent appears, so leaving it on the old colour would make a
+    // palette swap look half-applied.
+    (this.uniforms.uBounceColor.value as THREE.Color).copy(
+      bounceColor(this.accent ?? this.litColor, this.litColor, this.p.bounceLevel),
+    );
   }
 
   /** Colour of the sky this surface's shadow band is tinted toward. */

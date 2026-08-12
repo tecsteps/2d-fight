@@ -149,6 +149,17 @@ export interface LightPreset {
    * stage builds with `MeshStandardMaterial`. So this is the *stage* exposure
    * dial, and it is safe to swing it hard: a stage can go from noon to almost
    * black without touching character legibility by one band.
+   *
+   * That asymmetry is why this number, and not the post stack's exposure, is
+   * where a frame's value structure gets built. Review 002 measured a median
+   * frame luminance of 21 with 35% of pixels under L=16, and the fix could not
+   * be exposure: raising exposure lifts the fighters' lit side into the tone
+   * curve's shoulder and clips it, while leaving the ratio between stage and
+   * fighter exactly where it was. Raising *this* moves the stage up under a
+   * roster that stays put, which is the only move that turns a black ground
+   * into a mid-value one — and a mid-value ground is what an ink contour
+   * coloured as a dark tint of its own surface needs in order to be visible at
+   * all. See `docs/FRAME_BUDGET.md`.
    */
   keyLuminance: number;
   /**
@@ -262,7 +273,12 @@ export const LIGHT_PRESETS = {
     bounce: { color: 0xc08a5c, weight: 0.13, azimuth: 8, elevation: -30 },
     ambient: { sky: 0x46648f, ground: 0x3d2a1c, intensity: 0.30 },
     keyShare: 0.85,
-    keyLuminance: 1.9,
+    // Measured, not chosen. 1.9 put the bootstrap floor at display L≈34 and the
+    // frame's median at 21; 4.0 with the floor albedo in `bootstrap.ts` puts the
+    // ground under the fighters at L≈112 and the frame's median at ~60, which is
+    // the band `docs/FRAME_BUDGET.md` asks for. The roster is bit-identical
+    // across the change — see the field docs above for why.
+    keyLuminance: 4.0,
     nprSaturation: 1.02,
   },
 
@@ -276,7 +292,9 @@ export const LIGHT_PRESETS = {
     bounce: { color: 0x6e7c8c, weight: 0.06, azimuth: -4, elevation: -34 },
     ambient: { sky: 0x39496b, ground: 0x1b1d24, intensity: 0.3 },
     keyShare: 0.86,
-    keyLuminance: 1.6,
+    // Scaled with `dusk` when the stage exposure was rebuilt against the frame
+    // budget. Unverified against a capture — see the preset-table header.
+    keyLuminance: 3.4,
     nprSaturation: 1.14,
   },
 
@@ -290,7 +308,8 @@ export const LIGHT_PRESETS = {
     bounce: { color: 0x8a5ec8, weight: 0.1, azimuth: 0, elevation: -32 },
     ambient: { sky: 0x2f3f66, ground: 0x2a1830, intensity: 0.38 },
     keyShare: 0.84,
-    keyLuminance: 1.8,
+    /** Scaled with `dusk`; unverified against a capture. */
+    keyLuminance: 3.8,
     nprSaturation: 1.1,
   },
 
@@ -304,7 +323,8 @@ export const LIGHT_PRESETS = {
     bounce: { color: 0xb8ac96, weight: 0.14, azimuth: 6, elevation: -28 },
     ambient: { sky: 0x86a8dd, ground: 0x50412e, intensity: 0.6 },
     keyShare: 0.83,
-    keyLuminance: 2.6,
+    /** Scaled with `dusk`; unverified against a capture. */
+    keyLuminance: 5.5,
     nprSaturation: 1.06,
   },
 } satisfies Record<string, LightPreset>;

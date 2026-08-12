@@ -334,7 +334,7 @@ function makeEye(form: HeadForm, spec: FaceSpec, side: number): Eye {
     u: new THREE.Vector3(1, 0, 0).applyQuaternion(q),
     v: new THREE.Vector3(0, 1, 0).applyQuaternion(q),
     n: new THREE.Vector3(0, 0, 1).applyQuaternion(q),
-    A: r * (1.12 + 0.16 * spec.eyeOpen),
+    A: r * (1.02 + 0.14 * spec.eyeOpen),
     up: r * spec.lidUpper,
     dn: r * spec.lidLower,
   };
@@ -475,10 +475,13 @@ function buildLashes(form: HeadForm, spec: FaceSpec, eyes: Eye[], part: PartBuil
           const t = (c / (LASH_COLS - 1)) * 2 - 1;
           const [mu, md] = m(t);
           const edge = upper ? mu : md;
-          const taper = Math.pow(clamp01(1 - t * t), 0.32);
+          // Held near full weight almost to both canthi, then dropped fast: a
+          // lash that tapers smoothly from the middle reads as a soft smudge,
+          // and at gameplay size a smudge is nothing at all.
+          const taper = Math.pow(clamp01(1 - t * t), 0.2);
           const weight = upper
-            ? eye.r * spec.lashWeight * (0.62 + 0.55 * smoothstep(-1, 0.85, t)) * taper
-            : eye.r * spec.lashWeight * 0.3 * taper * smoothstep(-0.5, 0.9, t);
+            ? eye.r * spec.lashWeight * (0.78 + 0.34 * smoothstep(-1, 0.8, t)) * taper
+            : eye.r * spec.lashWeight * 0.34 * taper * smoothstep(-0.85, 0.2, t);
           const s = r / 2;
           const b = edge + (upper ? 1 : -1) * weight * s - (upper ? 1 : -1) * weight * 0.22;
           const proud = mix(0.0011, 0.0006, s);
@@ -660,13 +663,20 @@ function buildDarks(form: HeadForm, spec: FaceSpec, part: PartBuilder): void {
       const t = (c / (MOUTH_COLS - 1)) * 2 - 1;
       const s = clamp01(1 - t * t);
       const seam = -Math.pow(Math.abs(t), 2.2) * HL * 0.012;
-      const halfRest = HL * 0.0055;
-      const halfOpen = HL * (0.0055 + 0.085 * st.open + 0.02 * st.snarl);
-      const half = mix(halfRest, halfOpen, 1) * Math.pow(s, 0.4);
+      // Asymmetric: a mouth opens by dropping the jaw, so almost all of the
+      // growth is downward. Growing it evenly pushed the dark up over the
+      // philtrum and put the teeth in the middle of the hole.
+      const shape = Math.pow(s, 0.4);
+      const top = seam + HL * (0.006 + 0.024 * st.open + 0.02 * st.snarl) * shape;
+      const bot = seam - HL * (0.006 + 0.075 * st.open + 0.006 * st.snarl) * shape;
+      const b = mix(top, bot, r / 4);
       const rr = (r / 4) * 2 - 1;
-      const b = seam + half * -rr + st.open * HL * 0.012;
-      // Set back so the lips overlap it, and further back as it opens.
-      const proud = -HL * (0.008 + 0.05 * st.open) * (1 - Math.abs(rr) * 0.4);
+      // Always proud of the skin, at rest and open alike. Setting it *behind*
+      // the lips was the obvious move and it is wrong: the head has no hole in
+      // it, so when the lips part what shows through the gap is cheek, and a
+      // shouting fighter came out with his mouth closed. A dark shape lying on
+      // the surface is also exactly how a 2D fighter draws an open mouth.
+      const proud = (0.0010 + 0.0007 * st.open) * (1 - Math.abs(rr) * 0.25);
       return mouthPoint(form, spec, t * W, b, proud);
     }),
   );
@@ -694,9 +704,12 @@ function buildDarks(form: HeadForm, spec: FaceSpec, part: PartBuilder): void {
       const rad = r / 2;
       return new THREE.Vector3()
         .copy(seed)
-        .addScaledVector(tanA, Math.cos(th) * rad * HL * 0.026)
-        .addScaledVector(tanB, Math.sin(th) * rad * HL * 0.017)
-        .addScaledVector(nrm, -HL * (0.002 + 0.012 * (1 - rad)));
+        // Flat patches sitting a hair proud of the skin. Sinking the middle
+        // into the surface instead makes a cone that intersects the undercut at
+        // a different depth every column, which tore into a jagged blot.
+        .addScaledVector(tanA, Math.cos(th) * rad * HL * 0.022)
+        .addScaledVector(tanB, Math.sin(th) * rad * HL * 0.014)
+        .addScaledVector(nrm, HL * 0.0015);
     });
     part.grid(g, [g, g], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)]);
   }
@@ -717,13 +730,16 @@ function buildTeeth(form: HeadForm, spec: FaceSpec, part: PartBuilder): void {
         const s = clamp01(1 - t * t);
         const seam = -Math.pow(Math.abs(t), 2.2) * HL * 0.012;
         const sign = upper ? 1 : -1;
-        const height = HL * (upper ? 0.03 : 0.022) * Math.pow(s, 0.35);
+        const height = HL * (upper ? 0.022 : 0.016) * Math.pow(s, 0.35);
+        // Hung from the top / bottom edge of the cavity, so the strip reads as
+        // teeth behind a lip rather than as a bar across the opening.
         const shift = upper
-          ? st.open * HL * 0.028 + st.snarl * HL * 0.03
-          : -st.open * HL * 0.06 - st.snarl * HL * 0.004;
+          ? HL * (0.024 * st.open + 0.026 * st.snarl)
+          : -HL * (0.073 * st.open + 0.004 * st.snarl);
         const rr = r / 2;
-        const b = seam + shift + sign * height * rr;
-        return mouthPoint(form, spec, t * W, b, -HL * (0.014 + 0.03 * st.open));
+        const b = seam + shift - sign * height * rr;
+        // Buried at rest, brought in front of the dark when the lip lifts.
+        return mouthPoint(form, spec, t * W, b, -0.012 + 0.0136 * clamp01(st.open * 0.7 + st.snarl));
       }),
     );
     part.grid(grids[0], [grids[1], grids[2]], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)]);

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Loop } from './core/Loop';
 import { Renderer, QUALITY_HIGH } from './render/Renderer';
-import { buildBootstrapStage, type Stage } from './art/stages/bootstrap';
+import { buildBootstrapStage, type BootstrapStage, type Stage } from './art/stages/bootstrap';
 import { buildCharacterPreview } from './art/characters';
 import { nprDebugScene } from './render/npr';
 import { textureDebugSheet } from './art/textures';
@@ -90,11 +90,17 @@ function buildScene(): void {
       // judged on — is what gets captured.
       const spacing = 1.35;
       const x0 = -((ROSTER.length - 1) * spacing) / 2;
+      const contacts: { x: number; z: number; radius: number }[] = [];
       ROSTER.forEach((def, i) => {
         const g = buildCharacterPreview(def, { yaw: 0.42 });
         g.position.x = x0 + i * spacing;
         renderer.world.add(g);
+        contacts.push(
+          { x: g.position.x - 0.064, z: -0.028, radius: 0.1 },
+          { x: g.position.x + 0.064, z: 0.028, radius: 0.1 },
+        );
       });
+      (stage as BootstrapStage).setContactPoints(contacts);
       frameOn(new THREE.Box3(
         new THREE.Vector3(x0 - 0.7, 0, -0.8),
         new THREE.Vector3(-x0 + 0.7, 1.9, 0.8),

@@ -20,6 +20,7 @@ import {
   torsoAxis,
   type BuiltCostume,
   type GarmentBody,
+  type GarmentPiece,
 } from './garment';
 
 /**
@@ -40,11 +41,30 @@ import {
  *
  * Layer ladder used here, innermost first:
  *   LAYER.skin  0.0035  hand wraps
- *   0.0060              knee caps (neoprene, pulled onto the skin)
- *   LAYER.base  0.0090  compression shorts, crop top
- *   0.0200-0.0380       vest body — a profile, not a layer; see `vestLoft`
- *   0.0300-0.0400       stand collar, which must clear the vest's own neckline
+ *   0.0040              crop top, which has to fit inside the vest's lining
+ *   0.0055              knee caps (neoprene, pulled onto the skin)
+ *   LAYER.base  0.0090  compression shorts
+ *   0.0180-0.0280       vest body — a profile, not a layer; see `vestLoft`
+ *   0.0360-0.0460       stand collar, which must clear the vest's own neckline
+ *
+ * One number that is not what it looks like: the `cloth` given to every fitted
+ * piece here is far thicker than the fabric it stands for. See `WALL`.
  */
+
+/**
+ * Minimum wall thickness for a garment pulled tight onto the body, in metres.
+ *
+ * Not a statement about the fabric — compression jersey is under a millimetre.
+ * It is the depth budget the ink pass needs. The hull is the shell redrawn
+ * back-faced, so its fragments carry the depth of the piece's *lining*; where a
+ * surface runs near-tangent to the view — the crown of a glute, the top of a
+ * thigh, the swell of a ribcage — a few pixels of screen-space expansion move
+ * that lining far enough along the depth slope to beat the outer face, and the
+ * hull floods a hand-sized region of the garment solid black. Measured on Vera's
+ * shorts at a 3.8 mm wall: two blots per cheek. At 14 mm: none. The lining is
+ * never seen, so burying it inside the body costs nothing.
+ */
+const WALL = 0.015;
 
 const DEG = Math.PI / 180;
 
@@ -55,10 +75,10 @@ const WEAVE = 0.55;
  * How much of the quilt texture's authored tile the vest actually spans.
  *
  * `quiltedFabric` is asked for six cells over half a metre, which is an 8 cm
- * channel — a duvet, not a gilet. Tiling at 0.62 puts the channel near 5 cm,
+ * channel — a duvet, not a gilet. Tiling at 0.58 puts the channel near 4.8 cm,
  * which is what the design sheets draw.
  */
-const QUILT_TILE = 0.62;
+const QUILT_TILE = 0.58;
 
 /** Channels per quilt tile. Must match the `cells` the texture suite asks for. */
 const QUILT_CELLS = 6;
@@ -66,20 +86,17 @@ const QUILT_CELLS = 6;
 /**
  * Geometric loft between two quilt seams, in metres.
  *
- * Deliberately small next to the 20-38 mm the whole vest stands off the body:
+ * Deliberately small next to the 16-27 mm the whole vest stands off the body:
  * the *thickness* is the offset profile's job, and this is only the corrugation
  * on top of it. A cel ramp breaks on the slope of a ripple rather than on its
  * depth, and at a 5 cm channel pitch anything past ~2 mm swings the terminator
  * far enough to drop a whole band as a hard-edged blot.
  */
-const QUILT_LOFT = 0.0015;
+const QUILT_LOFT = 0.0010;
 
 /** The trunk. Anything a torso garment should lie on, and nothing it should engulf. */
 const TORSO = (b: BoneName): boolean =>
   b === 'hips' || b === 'spine' || b === 'chest' || b === 'neck' || b === 'shoulderL' || b === 'shoulderR';
-
-/** The neck column alone — the only thing a stand collar may be fitted to. */
-const NECK = (b: BoneName): boolean => b === 'neck';
 
 const armOf = (side: 'L' | 'R') => (b: BoneName): boolean =>
   b === `upperArm${side}` || b === `forearm${side}` || b === `hand${side}`;
@@ -101,6 +118,23 @@ const shinOf = (side: 'L' | 'R') => (b: BoneName): boolean =>
 function zigzag(x: number): number {
   const f = x - Math.floor(x);
   return 1 - 4 * Math.abs(f - 0.5);
+}
+
+/**
+ * Attaches a garment and takes it back out of the shadow map's receiver set.
+ *
+ * The mirror of the rule that keeps garments from *casting*: a shell wrapped 5
+ * to 25 mm onto a body that casts its own shadow cannot be a correct receiver
+ * either. Where the key light grazes a curved mass — the glutes, the lumbar
+ * hollow, the belly wall — the body's own depth wins by less than the depth bias
+ * and the garment is painted with hard-edged black blots in exactly the shape of
+ * the muscle underneath it. Vera has more of those surfaces than anyone and her
+ * shorts sit closest to them, so the artefact is unmissable on her. Cel shading
+ * is doing the form modelling anyway; what is given up is a contact shadow the
+ * ramp already implies.
+ */
+function wear(rig: BuiltCharacter, piece: GarmentPiece, into: BuiltCostume): void {
+  attachGarment(rig, piece, into).receiveShadow = false;
 }
 
 export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCostume {
@@ -128,14 +162,16 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
   const deltoidCrest = shoulderY + m.height * 0.002 + m.deltoidR;
 
   /**
-   * How far a torso garment may be lifted off the ribs to ride over the arm.
+   * How far the vest may be lifted off the ribs to ride over the arm.
    *
-   * Zero below the armpit — there the cloth belongs on the ribcage, and the
-   * hanging arm is fused to it in the implicit field — opening above it so the
-   * shoulder rides the deltoid and finishes as a cap.
+   * Zero for most of the deltoid's height — there the cloth belongs on the
+   * ribcage, and the hanging arm is fused to it in the implicit field — opening
+   * only in the last few centimetres below the crest, so the shoulder finishes
+   * as a narrow cap. Opened as early as the armpit instead, the same bridge
+   * wraps thirteen centimetres of deltoid and the vest grows a puffed sleeve.
    */
   const shoulderBridge = (y: number): number =>
-    0.15 * THREE.MathUtils.smoothstep(y, armpitY + 0.062, armpitY + 0.158);
+    0.15 * THREE.MathUtils.smoothstep(y, deltoidCrest - 0.105, deltoidCrest - 0.004);
 
   // ---------------------------------------------------------------- crop top --
   // A plum bra-cut top: scooped at the sternum, up over the shoulder as a strap,
@@ -157,8 +193,8 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
         ])(a),
       ),
     to: edgeAtHeight(topAxis, [
-      [0, chestY + 0.045],
-      [22, chestY + 0.092],
+      [0, chestY + 0.068],
+      [22, chestY + 0.104],
       [38, chestY + 0.140],
       [55, chestY + 0.158],
       [72, chestY + 0.120],
@@ -174,21 +210,24 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       [-38, chestY + 0.140],
       [-22, chestY + 0.092],
     ]),
-    offset: LAYER.base,
-    // Thinner than a normal garment layer: it has to fit inside the vest's own
-    // lining with a gap to spare, and compression jersey really is this thin.
-    cloth: 0.0032,
+    // Well under `LAYER.base`: the crop top's outer face has to clear the vest's
+    // lining by more than a `LAYER_GAP` at the one place the vest is thinnest,
+    // which is the neckline seam.
+    offset: 0.004,
+    cloth: WALL * 0.7,
     segments: 18,
     radial: 54,
     lining: 3,
     follow: TORSO,
-    bridge: (s) => shoulderBridge(topAxis.pointAt(s).y),
+    // Opens earlier than the vest's: a tank strap crosses the shoulder well
+    // inboard of an armhole seam, so it needs the deltoid sooner.
+    bridge: (s) => 0.15 * THREE.MathUtils.smoothstep(topAxis.pointAt(s).y, armpitY + 0.040, armpitY + 0.115),
     fromEdge: { fold: 0.010, roll: 0.0038, rings: 3 },
     toEdge: { fold: 0.009, roll: 0.0036, rings: 3 },
     drape: { folds: 5, amplitude: 0.0012, along: 1.6, seed: 17 },
     tileMetres: tex.garments.top.tileMetres,
   });
-  attachGarment(rig, {
+  wear(rig, {
     name: 'cropTop',
     geometry: topShell.geometry,
     kind: 'cloth',
@@ -214,14 +253,14 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
    * `LAYER_GAP`, everywhere.
    */
   const vestLoft = ramp([
-    [vestHemY, 0.026],
-    [lowRibY + 0.020, 0.034],
-    [chestY, 0.038],
-    [armpitY, 0.037],
-    [shoulderY - 0.020, 0.032],
-    [shoulderY + 0.030, 0.026],
-    [neckY + 0.030, 0.022],
-    [neckY + 0.080, 0.020],
+    [vestHemY, 0.020],
+    [lowRibY + 0.020, 0.026],
+    [chestY, 0.028],
+    [armpitY, 0.027],
+    [shoulderY - 0.020, 0.023],
+    [shoulderY + 0.030, 0.020],
+    [neckY + 0.030, 0.018],
+    [neckY + 0.080, 0.018],
   ]);
 
   /**
@@ -273,25 +312,35 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
     [45, vestHemY + 0.010],
     [75, vestHemY + 0.032],
     [105, vestHemY + 0.050],
-    [140, vestHemY + 0.066],
-    [180, vestHemY + 0.074],
-    [-140, vestHemY + 0.066],
+    [140, vestHemY + 0.078],
+    [180, vestHemY + 0.086],
+    [-140, vestHemY + 0.078],
     [-105, vestHemY + 0.050],
     [-75, vestHemY + 0.032],
     [-45, vestHemY + 0.010],
   ]);
-  // The armhole is this transition, not a notch: the edge is carried over the
-  // crest of the deltoid at the sides so the rings wrap the shoulder and close
-  // on the neck, and it drops back toward the collar seam front and back.
+  // The armhole is this transition, not a notch: over the deltoid — which
+  // subtends roughly 55 to 125 degrees from the spine — the edge is carried past
+  // the crest so the rings wrap the shoulder, and everywhere else it stops at
+  // the neckline seam.
+  //
+  // Where it stops matters more than it looks. Carried on up past the base of
+  // the neck at the front and back too, the shell's last rings sweep inward from
+  // the shoulder to the throat and the vest grows a horizontal flange all the
+  // way round the neck, which then hides the entire collar. Kept level with the
+  // top of the ribcage instead, the same rings finish as a neckline seam — which
+  // is the only thing a stand collar can rise out of.
   const vestTopStops: [number, number][] = [
-    [22, neckY + 0.021],
-    [45, neckY + 0.033],
-    [65, deltoidCrest - 0.004],
-    [85, deltoidCrest + 0.014],
-    [105, deltoidCrest + 0.012],
-    [130, neckY + 0.050],
-    [155, neckY + 0.040],
-    [180, neckY + 0.038],
+    [22, neckY + 0.002],
+    [40, neckY + 0.006],
+    [55, neckY + 0.014],
+    [70, deltoidCrest - 0.024],
+    [88, deltoidCrest + 0.012],
+    [106, deltoidCrest + 0.008],
+    [122, deltoidCrest - 0.030],
+    [140, neckY + 0.012],
+    [160, neckY + 0.006],
+    [180, neckY + 0.004],
   ];
   const vestTop = edgeAtHeight(
     vestAxis,
@@ -303,33 +352,36 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
     from: (_u, a) => vestAxis.sAtY(vestHem(a)),
     to: vestTop,
     offset: vestOffset,
-    // A padded shell is genuinely thick at its edges, and the default hem bead
-    // is derived from this — which is what gives the open front its fat rolled
-    // border instead of a paper edge.
-    cloth: 0.006,
-    segments: 30,
+    // A padded shell is genuinely thick at its edges, and this is also what
+    // gives the open front its fat rolled border instead of a paper edge. Held
+    // below `WALL` because the vest's lining has the crop top underneath it and
+    // cannot be buried in the body the way a fitted piece's can.
+    cloth: 0.011,
+    segments: 36,
     radial: 66,
     lining: 4,
     arc: [VEST_GAP, Math.PI * 2 - VEST_GAP],
     closed: false,
     follow: TORSO,
     bridge: (s) => shoulderBridge(vestAxis.pointAt(s).y),
-    fromEdge: { fold: 0.016, roll: 0.007, rings: 4 },
-    toEdge: { fold: 0.013, roll: 0.006, rings: 4 },
+    fromEdge: { fold: 0.014, roll: 0.006, rings: 4 },
+    toEdge: { fold: 0.011, roll: 0.005, rings: 4 },
     // No drape. Quilting is what a puffer does instead of folding, and a fold
     // field on top of the corrugation would just beat against it.
     tileMetres: quiltTile,
   });
-  attachGarment(rig, {
+  wear(rig, {
     name: 'vest',
     geometry: vest.geometry,
     kind: 'quilted',
     color: p.primary,
     shadowColor: 0x6b2a0e,
     tex: tex.garments.vest,
-    // Pushed past 1 so the seam pinch survives the cel quantisation: at the
-    // authored strength the stitch line lands inside a single band and vanishes.
-    normalScale: 1.25,
+    // Held well under 1. `quiltedFabric` authors its normal at strength 1.5 for
+    // a flat swatch; laid over a shell that is already corrugated at the same
+    // pitch, anything near full strength turns the channels into a row of
+    // inflated sausages and the vest reads as a life jacket.
+    normalScale: 0.65,
     specular: 0.22,
   }, out);
 
@@ -337,18 +389,18 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
   // slightly inward, because the whole point of a rib hem is that it is the one
   // place the padding is cinched tighter than the body under it.
   const hemBand = buildBand(vest.from, {
-    width: 0.034,
-    thickness: 0.011,
-    lift: -0.012,
+    width: 0.036,
+    thickness: 0.009,
+    lift: -0.010,
     sides: 10,
     tileMetres: tex.garments.collar.tileMetres,
   });
-  attachGarment(rig, {
+  wear(rig, {
     name: 'vestHem',
     geometry: hemBand,
     kind: 'cloth',
-    color: 0x9c3f16,
-    shadowColor: 0x53200b,
+    color: 0x92390f,
+    shadowColor: 0x4c1d08,
     tex: tex.garments.collar,
     normalScale: 1.1,
     specular: 0.16,
@@ -361,7 +413,7 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
   for (const sgn of [1, -1] as const) {
     const angle = VEST_GAP * sgn;
     const s0 = vestAxis.sAtY(vestHem(angle));
-    const s1 = vestAxis.sAtY(vestTopStops[0][1]);
+    const s1 = vestAxis.sAtY(vestTopStops[0][1] + 0.004);
     placketParts.push(
       buildBand(
         surfaceCurve(body, {
@@ -372,29 +424,39 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
           offset: (s, u, a) => vestOffset(s, u, a) + 0.004,
           follow: TORSO,
         }),
-        { width: 0.014, thickness: 0.005, sides: 8, tileMetres: tex.garments.top.tileMetres },
+        { width: 0.012, thickness: 0.006, sides: 8, tileMetres: tex.garments.top.tileMetres },
       ),
     );
   }
-  attachGarment(rig, {
+  wear(rig, {
     name: 'vestPlacket',
     geometry: mergeGeometry(placketParts),
     kind: 'leather',
-    color: 0x5f2a12,
-    shadowColor: 0x2e1408,
+    color: 0x7a3413,
+    shadowColor: 0x3c1a09,
     specular: 0.5,
     outlineWidth: 0.7,
   }, out);
 
-  // Stand collar. Its own shell on its own axis, fitted to the neck column
-  // alone: a collar traced from the trunk would take its radius from the
-  // trapezius and come out as a funnel twice the width of the head.
-  const collarAxis = torsoAxis(body, neckY - 0.02, neckY + 0.14);
-  const collarBaseY = neckY + 0.006;
+  // Stand collar, on its own axis.
+  //
+  // Traced against the whole body and then *capped*, rather than followed onto
+  // the neck bone. Following the neck alone is the obvious move and it silently
+  // produces nothing — the trace comes back at zero and the collar collapses
+  // onto the axis inside the throat — while an uncapped trace hands back the
+  // trapezius radius and the collar comes out as a funnel wider than the head.
+  // The cap says the same thing the subset was meant to say: a stand collar's
+  // radius is set by the neck it is buttoned around, whatever else is nearby.
+  const collarAxis = torsoAxis(body, neckY - 0.05, neckY + 0.14);
+  const collarBaseY = neckY - 0.012;
+  const collarNeck = ramp([
+    [collarBaseY, m.neckR + 0.012],
+    [collarBaseY + 0.100, m.neckR + 0.002],
+  ]);
   const collarLift = ramp([
-    [collarBaseY, 0.030],
-    [collarBaseY + 0.040, 0.036],
-    [collarBaseY + 0.075, 0.040],
+    [collarBaseY, 0.032],
+    [collarBaseY + 0.050, 0.042],
+    [collarBaseY + 0.100, 0.050],
   ]);
   const collar = buildShell(body, {
     axis: collarAxis,
@@ -403,35 +465,35 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
     to: (_u, a) =>
       collarAxis.sAtY(
         byAngle([
-          [0, collarBaseY + 0.048],
-          [60, collarBaseY + 0.058],
-          [90, collarBaseY + 0.066],
-          [140, collarBaseY + 0.072],
-          [180, collarBaseY + 0.074],
-          [-140, collarBaseY + 0.072],
-          [-90, collarBaseY + 0.066],
-          [-60, collarBaseY + 0.058],
+          [0, collarBaseY + 0.092],
+          [60, collarBaseY + 0.100],
+          [90, collarBaseY + 0.106],
+          [140, collarBaseY + 0.112],
+          [180, collarBaseY + 0.114],
+          [-140, collarBaseY + 0.112],
+          [-90, collarBaseY + 0.106],
+          [-60, collarBaseY + 0.100],
         ])(a),
       ),
-    offset: 0.08,
-    cloth: 0.007,
+    offset: (s) => collarLift(collarAxis.pointAt(s).y),
+    cloth: 0.010,
     segments: 14,
     radial: 44,
     lining: 3,
     arc: [26 * DEG, Math.PI * 2 - 26 * DEG],
     closed: false,
-    follow: NECK,
+    maxRadius: (s) => collarNeck(collarAxis.pointAt(s).y),
     toEdge: { fold: 0.014, roll: 0.0065, rings: 4 },
     tileMetres: quiltTile,
   });
-  attachGarment(rig, {
+  wear(rig, {
     name: 'vestCollar',
     geometry: collar.geometry,
     kind: 'quilted',
-    color: 0x00ff00,
+    color: p.primary,
     shadowColor: 0x6b2a0e,
     tex: tex.garments.vest,
-    normalScale: 1.1,
+    normalScale: 0.8,
     specular: 0.24,
   }, out);
 
@@ -464,24 +526,27 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
     const bias = side === 'L' ? 0 : 0.0006;
     const shell = buildShell(body, {
       axis,
-      from: 0.0,
+      // Cut at the waistband rather than at the top of the axis: the axis is
+      // started higher only so the sweep has room, and a raw ring left up there
+      // is a hole in the small of the back.
+      from: axis.sAtY(shortWaistY),
       to: axis.sAtY(shortHemY),
       offset: (s, _u, angle) => {
         // Pressed flat between the thighs, as any close-fitting short is.
         const inward = Math.max(0, -Math.cos(angle - inner));
         return shortOffset(axis.pointAt(s).y) * (1 - 0.35 * inward ** 1.4) + bias;
       },
-      cloth: 0.0038,
+      cloth: WALL,
       segments: 26,
       radial: 40,
       lining: 3,
-      fromEdge: undefined,
+      fromEdge: { fold: 0.009, roll: 0.0032, rings: 3 },
       toEdge: { fold: 0.010, roll: 0.0035, rings: 3 },
       drape: { folds: 5, amplitude: 0.0009, along: 2.4, seed: 23 + (side === 'R' ? 6 : 0) },
       keepSide: { normal: new THREE.Vector3(sign, 0, 0), d: -0.004, softness: 0.008 },
       tileMetres: tex.garments.shorts.tileMetres,
     });
-    attachGarment(rig, {
+    wear(rig, {
       name: `short${side}`,
       geometry: shell.geometry,
       kind: 'cloth',
@@ -491,8 +556,8 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       color: 0x3a3e46,
       shadowColor: 0x21242a,
       tex: tex.garments.shorts,
-      normalScale: 0.7,
-      specular: 0.22,
+      normalScale: 0.55,
+      specular: 0.06,
     }, out);
   }
 
@@ -505,12 +570,12 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       surfaceCurve(body, {
         axis: waistAxis,
         samples: 46,
-        s: () => waistAxis.sAtY(shortWaistY - 0.015),
+        s: () => waistAxis.sAtY(shortWaistY - 0.013),
         angle: (t) => t * Math.PI * 2,
         offset: LAYER.base + 0.0022,
         follow: TORSO,
       }),
-      { width: 0.030, thickness: 0.0045, closed: true, sides: 8, tileMetres: tex.garments.shorts.tileMetres },
+      { width: 0.026, thickness: 0.009, lift: -0.004, closed: true, sides: 8, tileMetres: tex.garments.shorts.tileMetres },
     ),
   );
   for (const side of ['L', 'R'] as const) {
@@ -527,7 +592,7 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
           offset: LAYER.base + 0.0022,
           follow: legOf(side),
         }),
-        { width: 0.021, thickness: 0.004, closed: true, sides: 8, tileMetres: tex.garments.shorts.tileMetres },
+        { width: 0.016, thickness: 0.007, lift: -0.003, closed: true, sides: 8, tileMetres: tex.garments.shorts.tileMetres },
       ),
     );
     // Outer side seam and the front panel seam, both running the length of the
@@ -543,21 +608,24 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
             offset: LAYER.base + 0.0018,
             follow: legOf(side),
           }),
-          { width: 0.0055, thickness: 0.0032, sides: 6, tileMetres: tex.garments.shorts.tileMetres },
+          { width: 0.0045, thickness: 0.005, lift: -0.002, sides: 6, tileMetres: tex.garments.shorts.tileMetres },
         ),
       );
     }
   }
-  attachGarment(rig, {
+  wear(rig, {
     name: 'shortTrim',
     geometry: mergeGeometry(shortTrim),
     kind: 'cloth',
-    color: 0x2f333a,
-    shadowColor: 0x1a1d22,
+    // Barely off the shorts' own value. A panel seam that contrasts reads as
+    // piping on a tracksuit; what technical fabric actually shows is the same
+    // cloth folded, which is a line of shading, not a line of colour.
+    color: 0x32363e,
+    shadowColor: 0x1c1f24,
     tex: tex.garments.shorts,
-    normalScale: 0.7,
-    specular: 0.24,
-    outlineWidth: 0.6,
+    normalScale: 0.55,
+    specular: 0.12,
+    outlineWidth: 0.45,
   }, out);
 
   // --------------------------------------------------------------- knee caps --
@@ -566,8 +634,8 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
   // out toward both elastic bands.
   for (const side of ['L', 'R'] as const) {
     const axis = chainAxis(body, [`thigh${side}`, `shin${side}`, `foot${side}`] as BoneName[], 0);
-    const sTop = axis.sAtY(kneeY + 0.090);
-    const sBot = axis.sAtY(kneeY - 0.082);
+    const sTop = axis.sAtY(kneeY + 0.078);
+    const sBot = axis.sAtY(kneeY - 0.072);
     const pad = buildShell(body, {
       axis,
       from: sTop,
@@ -577,7 +645,7 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
         const front = Math.max(0, Math.cos(angle));
         return 0.0055 + 0.006 * Math.sin(Math.PI * t) * front ** 1.6;
       },
-      cloth: 0.005,
+      cloth: WALL * 0.8,
       segments: 16,
       radial: 30,
       lining: 3,
@@ -596,14 +664,14 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
           samples: 28,
           s: () => s,
           angle: (t) => t * Math.PI * 2,
-          offset: 0.0072,
+          offset: 0.0062,
           follow: legOf(side),
         }),
-        { width, thickness: 0.0042, closed: true, sides: 8, tileMetres: tex.garments.collar.tileMetres },
+        { width, thickness: 0.007, lift: -0.003, closed: true, sides: 8, tileMetres: tex.garments.collar.tileMetres },
       );
-    attachGarment(rig, {
+    wear(rig, {
       name: `kneePad${side}`,
-      geometry: mergeGeometry([pad.geometry, cuff(sTop + 0.006, 0.024), cuff(sBot - 0.006, 0.020)]),
+      geometry: mergeGeometry([pad.geometry, cuff(sTop + 0.008, 0.017), cuff(sBot - 0.008, 0.014)]),
       kind: 'cloth',
       color: 0x22242a,
       shadowColor: 0x121317,
@@ -625,7 +693,7 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       from: 0.4,
       to: 0.95,
       offset: ramp([[0, LAYER.skin], [0.45, LAYER.skin + 0.0016], [1, LAYER.skin]]),
-      cloth: 0.0032,
+      cloth: WALL * 0.6,
       segments: 15,
       radial: 28,
       lining: 3,
@@ -645,9 +713,9 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
           offset: LAYER.skin + 0.0032,
           follow: armOf(side),
         }),
-        { width, thickness: 0.0032, closed: true, sides: 8, tileMetres: tex.wrap.tileMetres * WEAVE },
+        { width, thickness: 0.006, lift: -0.0022, closed: true, sides: 8, tileMetres: tex.wrap.tileMetres * WEAVE },
       );
-    attachGarment(rig, {
+    wear(rig, {
       name: `handWrap${side}`,
       geometry: mergeGeometry([
         shell.geometry,
@@ -704,14 +772,28 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
     const shinAxis = chainAxis(body, [`shin${side}`, `foot${side}`] as BoneName[], 0);
     const shaftTopY = m.ankleY + 0.152;
 
+    /**
+     * Radius ceiling that pinches every foot shell shut at both ends.
+     *
+     * A full-wrap shell is an annulus, not a bag: its two boundaries are rolled
+     * openings, and on a horizontal foot axis those openings face backward out
+     * of the heel and forward out of the toe. Left at their traced radius they
+     * are holes you can see the foot through — which is how a wrestling boot
+     * ends up rendering as an open-toed sandal. Squeezing the ceiling to a few
+     * millimetres over the first and last tenth of the axis draws both openings
+     * back onto the axis, where they sit inside the foot and close the form.
+     */
+    const bootCap = (s: number): number => 0.006 + 0.3 * Math.min(1, Math.min(s, 1 - s) / 0.1);
+
     // Upper. Angle 0 is up (the instep) because the axis runs horizontally, so
     // the anatomical-front hint would be degenerate.
     const upper = buildShell(body, {
       axis: footAxis,
-      from: 0.03,
-      to: 0.965,
+      from: 0.008,
+      to: 0.992,
       offset: ramp([[0, 0.0095], [0.3, 0.0085], [0.8, 0.008], [1, 0.0075]]),
-      cloth: 0.0045,
+      maxRadius: bootCap,
+      cloth: WALL * 0.75,
       segments: 20,
       radial: 32,
       lining: 3,
@@ -733,7 +815,7 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
       from: shinAxis.sAtY(shaftTopY),
       to: shinAxis.sAtY(0.035),
       offset: ramp([[0.035, 0.010], [m.ankleY + 0.05, 0.0125], [shaftTopY, 0.0145]]),
-      cloth: 0.005,
+      cloth: WALL * 0.8,
       segments: 16,
       radial: 32,
       lining: 3,
@@ -742,7 +824,7 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
       drape: { folds: 5, amplitude: 0.0011, along: 1.6, seed: 67 },
       tileMetres: hide,
     });
-    attachGarment(rig, {
+    wear(rig, {
       name: `boot${side}`,
       geometry: mergeGeometry([upper.geometry, shaft.geometry]),
       kind: 'leather',
@@ -761,8 +843,9 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
         axis: footAxis,
         from,
         to,
-        offset: 0.0138,
-        cloth: 0.0042,
+        offset: 0.0168,
+        cloth: 0.0055,
+        maxRadius: (s) => bootCap(s) + 0.004,
         segments: 12,
         radial: 30,
         lining: 3,
@@ -774,9 +857,9 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
         toEdge: { fold: 0.008, roll: 0.004, rings: 3 },
         tileMetres: hide,
       }).geometry;
-    attachGarment(rig, {
+    wear(rig, {
       name: `bootPanel${side}`,
-      geometry: mergeGeometry([panel(0.05, 0.36), panel(0.76, 0.955)]),
+      geometry: mergeGeometry([panel(0.04, 0.30), panel(0.80, 0.988)]),
       kind: 'leather',
       color: 0x4a4d56,
       shadowColor: 0x24262c,
@@ -791,10 +874,11 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
     // with an offset here sinks through the stage unless it is clipped.
     const sole = buildShell(body, {
       axis: footAxis,
-      from: 0.015,
-      to: 0.98,
-      offset: 0.0155,
-      cloth: 0.005,
+      from: 0.008,
+      to: 0.99,
+      offset: 0.0175,
+      maxRadius: (s) => bootCap(s) + 0.008,
+      cloth: 0.009,
       segments: 20,
       radial: 26,
       lining: 3,
@@ -808,7 +892,7 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
       toEdge: { fold: 0.009, roll: 0.005, rings: 3 },
       tileMetres: 0.2,
     });
-    attachGarment(rig, {
+    wear(rig, {
       name: `bootSole${side}`,
       geometry: sole.geometry,
       kind: 'leather',
@@ -830,12 +914,12 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
             samples: 44,
             s: (t) => THREE.MathUtils.lerp(0.40, 0.68, t),
             angle: (t) => hand * 0.52 * zigzag(t * 2.5 + 0.25),
-            offset: 0.0132,
+            offset: 0.0162,
             front: UP,
             left: LEFT,
             follow: footOf(side),
           }),
-          { width: 0.0052, thickness: 0.0034, sides: 6, tileMetres: 0.12 },
+          { width: 0.0052, thickness: 0.006, lift: -0.0024, sides: 6, tileMetres: 0.12 },
         ),
       );
       laces.push(
@@ -845,14 +929,14 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
             samples: 52,
             s: (t) => THREE.MathUtils.lerp(shinAxis.sAtY(shaftTopY - 0.012), shinAxis.sAtY(m.ankleY - 0.006), t),
             angle: (t) => hand * 0.5 * zigzag(t * 3 + 0.25),
-            offset: 0.0185,
+            offset: 0.0225,
             follow: shinOf(side),
           }),
-          { width: 0.0052, thickness: 0.0034, sides: 6, tileMetres: 0.12 },
+          { width: 0.0052, thickness: 0.006, lift: -0.0024, sides: 6, tileMetres: 0.12 },
         ),
       );
     }
-    attachGarment(rig, {
+    wear(rig, {
       name: `bootLace${side}`,
       geometry: mergeGeometry(laces),
       kind: 'wrap',

@@ -55,6 +55,20 @@ export interface RampSpec {
    */
   shadowLevel?: number;
   /**
+   * Value of the deep / occlusion plane — the band *below* the core edge, where
+   * cast shadow and contact live.
+   *
+   * It was hard-coded to 0 (pure shadow colour) until review 002, which measured
+   * the consequence: with `shadowLevel` also near 0 there was no step between the
+   * form shadow and the occlusion, so the entire dark side rendered as one flat
+   * fill — 48.5% of Mali and 56.0% of Davi inside a single 8-L histogram bin.
+   * Separating the two is what turns "a shadow" into "a shadow with a core".
+   *
+   * Note this is the *ramp* level only: `ToonMaterial` also multiplies the same
+   * band by `coreShadowTint`, so the rendered deep value is lower than this.
+   */
+  deepLevel?: number;
+  /**
    * Value of the main lit plane. Below 1 so that a fourth band has somewhere to
    * go without brightening past the albedo.
    */
@@ -76,6 +90,7 @@ const DEFAULTS: Omit<ResolvedRamp, 'bands' | 'sharpness'> = {
   gamma: 0.78,
   core: 0.42,
   shadowLevel: 0.14,
+  deepLevel: 0,
   litLevel: 0.88,
 };
 
@@ -91,6 +106,7 @@ function resolve(spec: RampSpec): ResolvedRamp {
     gamma: spec.gamma ?? DEFAULTS.gamma,
     core: THREE.MathUtils.clamp(spec.core ?? DEFAULTS.core, 0.05, 0.9),
     shadowLevel: THREE.MathUtils.clamp(spec.shadowLevel ?? DEFAULTS.shadowLevel, 0, 1),
+    deepLevel: THREE.MathUtils.clamp(spec.deepLevel ?? DEFAULTS.deepLevel, 0, 1),
     litLevel: THREE.MathUtils.clamp(spec.litLevel ?? DEFAULTS.litLevel, 0, 1),
   };
 }
@@ -126,17 +142,31 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
  * A two-band ramp is then genuinely two tones, and a three-band ramp is the hard
  * cel read this pipeline wants by default: one light shape, one shadow shape,
  * one form shadow inside the shadow.
+ *
+ * ## What review 002 changed
+ *
+ * The hierarchy above is right and it stays. What it did not carry was *value*:
+ * `shadowLevel` sat at 0.10 and the band below it was hard-coded to 0, so both
+ * dark bands rendered as very nearly the pure shadow colour and there was no
+ * step between them. Measured on the shipping frame that is one flat fill with a
+ * crisp border — 48.5% of Mali inside a single 8-L bin with a 70-unit void under
+ * it — which is a two-tone read, not the four-deep banding KOF XIII actually has.
+ *
+ * So `deepLevel` is now its own number, and callers set `shadowLevel` high enough
+ * that the shadow plane is a *shadow* rather than a hole. The hierarchy is
+ * unchanged: the terminator still owns the largest step in the ramp by a factor
+ * of three, and the core edge still never touches the lit side.
  */
 function bandLayout(r: ResolvedRamp): { edges: number[]; values: number[] } {
   const term = r.toe;
   const core = term * r.core;
 
   if (r.bands === 2) return { edges: [term], values: [r.shadowLevel, 1] };
-  if (r.bands === 3) return { edges: [core, term], values: [0, r.shadowLevel, 1] };
+  if (r.bands === 3) return { edges: [core, term], values: [r.deepLevel, r.shadowLevel, 1] };
 
   const upper = r.bands - 3;
   const edges = [core, term];
-  const values = [0, r.shadowLevel, r.litLevel];
+  const values = [r.deepLevel, r.shadowLevel, r.litLevel];
   // Form bands start well clear of the terminator so the two never read as a
   // pair of edges; the last one lands exactly on `shoulder`.
   const first = term + (r.shoulder - term) * 0.45;
@@ -165,7 +195,7 @@ function bandLayout(r: ResolvedRamp): { edges: number[]; values: number[] } {
  */
 export function bandRamp(spec: RampSpec): THREE.DataTexture {
   const r = resolve(spec);
-  const key = `${r.bands}|${r.sharpness.toFixed(3)}|${r.toe.toFixed(3)}|${r.shoulder.toFixed(3)}|${r.terminatorWidth.toFixed(3)}|${r.gamma.toFixed(3)}|${r.core.toFixed(3)}|${r.shadowLevel.toFixed(3)}|${r.litLevel.toFixed(3)}`;
+  const key = `${r.bands}|${r.sharpness.toFixed(3)}|${r.toe.toFixed(3)}|${r.shoulder.toFixed(3)}|${r.terminatorWidth.toFixed(3)}|${r.gamma.toFixed(3)}|${r.core.toFixed(3)}|${r.shadowLevel.toFixed(3)}|${r.deepLevel.toFixed(3)}|${r.litLevel.toFixed(3)}`;
   const hit = cache.get(key);
   if (hit) return hit;
 
@@ -522,6 +552,39 @@ export function coreShadowTint(base: THREE.ColorRepresentation, strength = 1): T
   const warm = Math.cos((_hsl.h - 0.08) * Math.PI * 2) * 0.5 + 0.5;
   const k = strength * (0.14 + 0.1 * warm);
   return c.setRGB(1 - k * 1.4, 1 - k, 1 - k * 0.15);
+}
+
+/**
+ * Colour of the light bouncing back into the *outside* edge of a shadow.
+ *
+ * Reflected light is the band review 002 asked for by name — "a narrow bounce
+ * band at the shadow's lower edge, carrying the character's accent hue at high
+ * saturation… the band that makes painted art read as painted". It is not a
+ * dimmer shadow and it is not a rim: it is the floor and the surrounding air
+ * throwing colour back onto the surfaces that face away from the key, and in a
+ * painted frame it is the most *saturated* thing on the figure.
+ *
+ * So the accent's hue is kept, its chroma is pushed to near-maximum, and its
+ * lightness is pinned to a fraction of the surface it lands on — a bounce that
+ * carried the accent's own lightness would read as a second key light on the
+ * dark side, which is exactly the mistake the rim term used to make.
+ *
+ * `strength` is the fraction of the *lit* surface's lightness the bounce sits
+ * at; the shader adds this colour, so it lands on top of whatever band it falls
+ * in rather than replacing it.
+ */
+export function bounceColor(
+  accent: THREE.ColorRepresentation,
+  surface: THREE.ColorRepresentation,
+  strength = 0.3,
+): THREE.Color {
+  const c = new THREE.Color(accent);
+  c.getHSL(_hsl, THREE.SRGBColorSpace);
+  new THREE.Color(surface).getHSL(_hslB, THREE.SRGBColorSpace);
+  // Near-neutral accents (a white-ish rim hex) get a floor on chroma, or the
+  // bounce lands as a grey lift and the band stops carrying any identity.
+  const s = THREE.MathUtils.clamp(_hsl.s * 1.25 + 0.3, 0.55, 0.92);
+  return c.setHSL(_hsl.h, s, THREE.MathUtils.clamp(_hslB.l * strength, 0.02, 0.6), THREE.SRGBColorSpace);
 }
 
 /**

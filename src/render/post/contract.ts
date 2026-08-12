@@ -187,10 +187,16 @@ export const DEFAULT_TUNING: PostTuning = {
   tonemapToe: 1.3,
 
   bloom: {
-    threshold: 0.78,
-    knee: 0.42,
+    // Above every diffuse surface in the frame, on purpose. At 0.78/0.42 the
+    // knee opened at scene-linear 0.36 and lit skin sits at 0.5, so all four
+    // fighters were bloom sources and each carried a +30-60% halo into the
+    // background — the loudest 3D tell in review 002's frame. Bloom in this
+    // renderer belongs to emitters (hitsparks, supers, practicals), which are
+    // authored at 1.5-3.0. `BloomChain` clamps anything lower; see its header.
+    threshold: 1.35,
+    knee: 0.3,
     intensity: 0.62,
-    radius: 0.85,
+    radius: 0.55,
     tint: 0xfff0d6,
     saturation: 1.25,
     levels: 6,
@@ -203,8 +209,12 @@ export const DEFAULT_TUNING: PostTuning = {
     attenuation: 0.86,
   },
   grade: {
-    contrast: 0.4,
-    pivot: 0.42,
+    // Backed off from 0.4/0.42 together with the toe fix in `grade.ts`. The two
+    // were compounding: a steep toe pivoted high put a fighter's whole shadow
+    // side and the entire stage below the pivot, and the S then spent its
+    // contrast crushing them rather than separating them.
+    contrast: 0.3,
+    pivot: 0.38,
     shoulder: 0.6,
     perChannel: 0.35,
     shadowTint: 0x2f6f7a,
@@ -212,8 +222,11 @@ export const DEFAULT_TUNING: PostTuning = {
     highlightTint: 0xffd9a8,
     highlightAmount: 0.16,
     saturation: 1.15,
-    shadowDesat: 0.22,
-    lift: 0.012,
+    // Halved. A global desaturation of the shadows is the grade's share of the
+    // 18-36 point saturation drop the budget caps at 15, and it lands on the
+    // characters as loss of colour identity the moment they turn from the key.
+    shadowDesat: 0.12,
+    lift: 0.02,
     highlightBleed: 0.1,
     crosstalk: 0.02,
     size: 32,
@@ -237,9 +250,16 @@ export const DEFAULT_TUNING: PostTuning = {
   dimColor: 0x6b7ad9,
   timeStopColor: 0xb8d2ff,
 
-  vignette: 0.34,
-  vignetteInner: 0.34,
-  vignetteOuter: 0.86,
+  // Measured down from 0.34 / 0.34 / 0.86. At those numbers the vignette took
+  // the frame to 66% of its value at the point the budget samples floor
+  // luminance, which is a 1.52x left-to-centre swing from the lens *alone* —
+  // above the 1.4x the budget allows before the stage has contributed anything.
+  // It was also a large share of the crushed corners: 35% of the frame under
+  // L=16. This is still a clearly visible vignette; it is no longer a value
+  // structure of its own.
+  vignette: 0.18,
+  vignetteInner: 0.45,
+  vignetteOuter: 1.05,
   vignetteRoundness: 0.75,
 
   grain: 0.03,
