@@ -45,6 +45,23 @@ function isDiagonal(d: number): boolean {
 }
 
 /**
+ * Did the stick stay put after the motion finished?
+ *
+ * This is what tells a fireball from a dragon punch. Walking forward and then
+ * rolling 2-3-6 contains a literal 6-2-3, so the DP matches too — but the
+ * player's stick ends on 6, not on the 3 the DP finished with. Requiring
+ * everything after the final beat to still satisfy that beat (or be neutral)
+ * throws out the reading the player has already moved past.
+ */
+function tailHolds(input: InputBuffer, finalBeat: number, from: number): boolean {
+  for (let age = from - 1; age >= 0; age--) {
+    const d = input.at(age).dir;
+    if (d !== 5 && !dirSatisfies(d, finalBeat)) return false;
+  }
+  return true;
+}
+
+/**
  * Has `spec` been completed within the last `lenience` frames?
  * Directions are read facing-relative, so a command is authored once.
  */
@@ -82,7 +99,7 @@ export function matchMotion(input: InputBuffer, spec: MotionSpec, lenience = 5):
     lastAge = age;
     beat++;
     if (beat > last) {
-      if (age <= lenience) return true;
+      if (age <= lenience && tailHolds(input, beats[last], age)) return true;
       // Completed, but too long ago for this button press to claim it. Keep
       // scanning: a fresher completion may follow.
       beat = 0;

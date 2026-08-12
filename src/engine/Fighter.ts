@@ -281,6 +281,9 @@ export class Fighter {
       this.hitstop--;
       // The rattle decays inside the freeze, which is what reads as impact.
       if (this.shake > 0) this.shake = this.shake > 1 ? this.shake - 1 : 0;
+      // Inputs still count during the freeze — this is where combos are
+      // confirmed — they just do not take effect until it lifts.
+      this.sm.bufferDuringFreeze();
       this.refreshBoxes();
       return;
     }

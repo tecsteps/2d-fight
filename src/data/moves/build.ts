@@ -402,14 +402,17 @@ export function attackState(spec: AttackStateSpec, height: number): StateDef {
   const total = last.start + last.len + spec.recovery;
 
   const attack = mkAttack(spec.attack);
+  // A move flagged `airborne` leaves the ground even though it is authored from
+  // a standing stance — that is what a dragon punch is — so it takes air physics
+  // and an air posture, and ends when it lands rather than on a frame count.
+  const air = spec.airborne || stance === 'air';
   const st: StateDef = {
     id: spec.id,
     name: spec.name,
-    type: stance === 'crouch' ? StateType.Crouch : stance === 'air' ? StateType.Air : StateType.Stand,
+    type: air ? StateType.Air : stance === 'crouch' ? StateType.Crouch : StateType.Stand,
     moveType: MoveType.Attack,
     physics:
-      spec.physics ??
-      (stance === 'air' ? PhysicsMode.Air : stance === 'crouch' ? PhysicsMode.Crouch : PhysicsMode.Stand),
+      spec.physics ?? (air ? PhysicsMode.Air : stance === 'crouch' ? PhysicsMode.Crouch : PhysicsMode.Stand),
     ctrl: false,
     duration: spec.airborne ? -1 : total,
     next: spec.next ?? (stance === 'crouch' ? S.CROUCH_IDLE : S.STAND),

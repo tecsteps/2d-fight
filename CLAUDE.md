@@ -19,6 +19,16 @@ be stopped at any time**. Nothing survives except what is committed and pushed.
    wave of 6 agents actually runs three pairs back to back. Size waves at 4–6
    agents and expect them to serialize — a 10-agent wave is a 40-minute workflow
    wearing a costume, and it will get killed.
+
+   **Scope each agent to one deliverable.** Wave A proved the failure mode: the
+   "engine" and "textures" agents were each given a whole subsystem and ran ~2
+   hours, while the three narrowly-scoped agents finished in ~20 minutes. An
+   agent asked for seven files will take seven times as long as one asked for
+   one, and it is the long agents that the container kills. Split by file, not
+   by subsystem.
+
+   The Monitor `persistent: true` flag does **not** lift the 30-minute cap —
+   monitors time out and must be re-armed. Expect to re-arm once per wave.
 2. **Always set a wakeup timer when a workflow is running.** Use
    `ScheduleWakeup` (dynamic `/loop` mode) with a fallback heartbeat of
    1200–1800s. On wake: call `TaskList`; if the workflow is gone/dead and its

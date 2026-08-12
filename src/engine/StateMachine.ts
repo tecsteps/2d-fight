@@ -50,7 +50,7 @@ import type { Fighter } from './Fighter';
  */
 
 /** How many frames a command that could not run stays queued. */
-const COMMAND_BUFFER = 4;
+const COMMAND_BUFFER = 6;
 /** Frames of recovery past the last active frame that cancels stay legal. */
 const CANCEL_TAIL = 6;
 
@@ -312,8 +312,9 @@ export class StateMachine {
       }
     }
 
+    // `require.drive` is a gate, not a price: HD activation empties the bar
+    // itself, and charging twice would leave nothing to activate with.
     if (cmd.require?.power) f.gauges.spendPower(cmd.require.power);
-    if (cmd.require?.drive) f.gauges.drive -= cmd.require.drive;
 
     if (fromBlockstun) {
       f.blockstun = 0;
@@ -321,6 +322,27 @@ export class StateMachine {
     }
     this.changeState(cmd.state);
     return true;
+  }
+
+  /**
+   * Recognise commands while frozen in hitstop, but do not act on them.
+   *
+   * Cancelling happens *during* the impact freeze — that is the window a player
+   * confirms a hit in — so an engine that stops reading input during hitstop
+   * makes every combo a frame-perfect guess. The command is stashed and fires
+   * on the first live frame.
+   */
+  bufferDuringFreeze(): void {
+    const f = this.owner;
+    if (f.noCommands) return;
+    const cmds = this.moves.commands;
+    for (let i = 0; i < cmds.length; i++) {
+      if (!this.inputMatches(cmds[i])) continue;
+      if (!this.requirementsMet(cmds[i].require)) continue;
+      this.buffered = i;
+      this.bufferedFrames = COMMAND_BUFFER;
+      return;
+    }
   }
 
   /* -------------------------------------------------------------- *
