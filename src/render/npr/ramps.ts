@@ -558,9 +558,53 @@ export function shadowRotation(
  * the shadow is not cooler by at least `minCool`, mixes in more skylight until it
  * is. A caller cannot mis-tune this into producing a warm shadow.
  */
+
+/**
+ * Rotate a hue toward violet without crossing green.
+ *
+ * The direction matters more than the amount. Taking the *shortest* path from
+ * orange skin to a cool shadow runs straight through green and turns cream
+ * wraps mouldy — a bug this pipeline has already shipped once. Warm hues
+ * therefore travel the other way, red to magenta to violet, and only hues
+ * already past green take the direct route.
+ *
+ * The step is clamped so no amount of rotation can overshoot the cool anchor and
+ * come back round into warm again, which is what makes this safe to call with a
+ * per-character rotation budget.
+ *
+ * `h` and the result are in turns (0..1); `degrees` is in degrees.
+ */
+function towardCool(h: number, degrees: number): number {
+  const COOL = 265 / 360;
+  const dir = h < 0.34 || h > COOL ? -1 : 1;
+  const dist = dir < 0 ? (h - COOL + 1) % 1 : (COOL - h + 1) % 1;
+  const step = Math.min(Math.abs(degrees) / 360, dist);
+  return (((h + dir * step) % 1) + 1) % 1;
+}
+
+/**
+ * Mix `tint` into `c` while holding `c`'s lightness.
+ *
+ * A plain lerp toward the sky both cools *and* lightens, so every skylight or
+ * accent mix silently undid the value drop applied just before it — the shadow
+ * ended up neither the right hue nor the right value. Preserving lightness makes
+ * hue and value independent dials, which is the only way the measured guarantee
+ * at the end of `coolShadow` can converge.
+ */
+function tintAtLightness(c: THREE.Color, tint: THREE.Color, amount: number): void {
+  if (amount <= 0) return;
+  c.getHSL(_tintKeep, THREE.SRGBColorSpace);
+  const keep = _tintKeep.l;
+  c.lerp(tint, amount);
+  c.getHSL(_tintKeep, THREE.SRGBColorSpace);
+  c.setHSL(_tintKeep.h, _tintKeep.s, keep, THREE.SRGBColorSpace);
+}
+
+const _tintKeep = { h: 0, s: 0, l: 0 };
+
 export function coolShadow(base: THREE.ColorRepresentation, opts: ShadowTintOptions = {}): THREE.Color {
-  const shift = opts.shift ?? 0.24;
-  const satGain = opts.satGain ?? 0.86;
+  const rotate = opts.rotate ?? 42;
+  const chromaFall = opts.chromaFall ?? 0.34;
   const satLift = opts.satLift ?? 0.1;
   const value = opts.value ?? 0.44;
   const skylight = THREE.MathUtils.clamp(opts.skylight ?? 0.24, 0, 1);
@@ -571,12 +615,17 @@ export function coolShadow(base: THREE.ColorRepresentation, opts: ShadowTintOpti
   const c = new THREE.Color(base);
   c.getHSL(_hsl, THREE.SRGBColorSpace);
 
-  const h = towardCool(_hsl.h, shift);
-  // Compressive rather than a flat multiply: a saturated surface gives up chroma
-  // in shadow, a near-white wrap picks a little up. A single gain cannot do both,
-  // and using a gain above 1 for everything is what pinned the old shadows to
-  // their lit hue.
-  const s = THREE.MathUtils.clamp(_hsl.s * satGain + satLift * (1 - _hsl.s), 0, 1);
+  const h = towardCool(_hsl.h, rotate);
+  // Chroma falls *with* the rotation — the coupling is the whole point. Review
+  // 003 measured a 45-55 degree rotation at essentially unchanged chroma and
+  // named the result exactly: a shadow that keeps the light side's saturation
+  // and moves 50 degrees in hue is not a shadow, it is a second colour. That is
+  // why 14-36% of every fighter's bare skin read as bruising.
+  //
+  // Compressive rather than a flat multiply, so a saturated surface gives up
+  // chroma while a near-white wrap picks a little up; one gain cannot do both.
+  const fall = THREE.MathUtils.clamp(1 - chromaFall * (rotate / 60), 0, 1);
+  const s = THREE.MathUtils.clamp(_hsl.s * fall + satLift * (1 - _hsl.s), 0, 1);
   // Dark surfaces drop proportionally less. A navy gi taken to 44% of its own
   // lightness is a black hole; the eye still needs to read the fabric.
   const l = Math.max(0, _hsl.l * THREE.MathUtils.lerp(0.78, value, Math.min(1, _hsl.l * 2.2)));

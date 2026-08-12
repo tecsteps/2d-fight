@@ -9,6 +9,7 @@ import {
   coreShadowTint,
   fitValueBand,
   inkColor,
+  shadowRotation,
   warmth,
 } from './ramps';
 
@@ -213,6 +214,14 @@ interface KindPreset {
    */
   shadowSat: number;
   shadowSatLift: number;
+  /**
+   * Chroma given up per 60 degrees of shadow hue rotation.
+   *
+   * Coupled to the rotation on purpose. Skin carries the highest value because
+   * skin is where an uncoupled rotation was most visible — a warm tone taken 50
+   * degrees round at full chroma reads as a bruise, not as shade.
+   */
+  shadowChromaFall: number;
   /** How far the highlight colour is pulled to white. Pure white reads as vinyl. */
   specTint: number;
 
@@ -314,6 +323,7 @@ const BASE: KindPreset = {
   shadowValue: 1,
   shadowSat: 0.86,
   shadowSatLift: 0.1,
+  shadowChromaFall: 0.34,
   specTint: 0.35,
 
   skylight: 0.12,
@@ -497,8 +507,18 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     // 30 points against a budget of 15. Same temperature separation, a third of
     // the chroma loss — and it widens the roster's shadow spread as a side effect,
     // because four hues rotated further apart are further apart.
-    shadowShift: 0.95,
-    skylight: 0.11,
+    // Cut from 0.95 after review 003. The reasoning above is sound in isolation
+    // — a hue rotation is cheaper in chroma than a sky mix — but skin's lit hue
+    // sits at ~29 degrees, so a 40 degree rotation lands at ~349: a saturated
+    // plum slab across an orange limb. Measured at 30-35% of Mali's and Kai's
+    // bare skin, and the critic reading the frame called it bruising, not blood.
+    // Skin now holds near its own hue family and buys coolness from skylight.
+    shadowShift: 0.3,
+    // Held low deliberately. DEFAULT_SKY is a blue, so mixing it in is a second
+    // route to purple — raising this to 0.3 while cutting the rotation traded a
+    // crimson plum for a mauve one and fixed nothing. Skin's coolness comes from
+    // the small rotation plus the value drop; the sky is a seasoning here.
+    skylight: 0.13,
     // Held low on purpose now that the reflected-light band carries the accent.
     // Pushed harder it un-cools the shadow — measured at 0.18 on the roster's
     // rim hexes, three of which are warm cream, Davi's hue rotation fell to −19.7°
@@ -563,6 +583,8 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     // −37° to −53° at both settings, because `coolShadow` verifies it.
     shadowSat: 1.1,
     shadowSatLift: 0.04,
+    // Highest on the roster: what rotation remains is paid for in chroma.
+    shadowChromaFall: 0.62,
   },
 
   // Hair reads as a solid shape with one banded highlight travelling round it.
@@ -1464,9 +1486,11 @@ function deriveShadow(
   accentAmount: number,
 ): THREE.Color {
   const shadow = coolShadow(seed, {
-    shift: 0.24 * p.shadowShift,
+    // Per-character rotation budget, in degrees — not the old global constant
+    // that landed the whole roster's skin shadow inside a 22 degree window.
+    rotate: shadowRotation(lit, accent, 42 * p.shadowShift),
     value: 0.44 * p.shadowValue,
-    satGain: p.shadowSat,
+    chromaFall: p.shadowChromaFall,
     satLift: p.shadowSatLift,
     skylight: p.skylight,
     skyColor: NPR_TUNING.skyColor,
