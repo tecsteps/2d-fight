@@ -8,7 +8,7 @@ import {
   type RigMetrics,
 } from '../../anim/Skeleton';
 import type { FighterDef } from '../../data/roster';
-import { createToonMaterial } from '../../render/npr/ToonMaterial';
+import { createToonMaterial, type ToonMaterial } from '../../render/npr/ToonMaterial';
 import { addOutlines } from '../../render/npr/outline';
 import type { NPRMaterial } from '../../render/npr/contract';
 import {
@@ -72,6 +72,17 @@ export function buildCharacter(def: FighterDef, opts: BuildCharacterOptions = {}
     rimColor: p.rim,
     skinned: true,
   });
+
+  // Push the fighter's energy colour into their shadow tint.
+  //
+  // Without this the accent falls back to `palette.rim`, and three of the four
+  // rim values are near-identical warm cream — so every fighter's shadow drifts
+  // to the same place and the roster loses its colour identity the moment they
+  // turn away from the key. `energy` is the one genuinely distinctive per-fighter
+  // colour in the palette: Vera orange, Mali red, Davi and Kai two different
+  // blues. The shader's cooler-than-lit guarantee still runs afterwards, so a
+  // warm accent lands as hue identity inside a shadow that stays cool.
+  (skinMaterial as ToonMaterial).setShadowAccent(p.energy);
 
   const root = sk.root;
   root.name = `fighter:${def.id}`;

@@ -121,9 +121,9 @@ export const VERA: FighterDef = {
   style: 'Catch Wrestling',
   referenceDir: 'vera',
   palette: {
-    skin: 0xe2a17c,
-    skinShadow: 0xa9694f,
-    skinSSS: 0xd4674a,
+    skin: 0xeeb094,
+    skinShadow: 0xb27159,
+    skinSSS: 0xdd6a52,
     hair: 0xa8481f,
     hairSheen: 0xd8763c,
     primary: 0xb44a1b, // burnt-orange quilted vest
@@ -256,9 +256,9 @@ export const KAI: FighterDef = {
   style: 'Full-Contact Karate',
   referenceDir: 'kai',
   palette: {
-    skin: 0xe09868,
-    skinShadow: 0xa3623c,
-    skinSSS: 0xcf5c3a,
+    skin: 0xd68d52,
+    skinShadow: 0x99592f,
+    skinSSS: 0xc75530,
     hair: 0x1c1c24,
     hairSheen: 0x4d4d63,
     primary: 0x1b2c44, // navy sleeveless wrap gi
