@@ -196,9 +196,9 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
    * parted and the cloth is free to hang.
    */
   const innerSquash = ramp([
-    [Y('knee'), 0.32],
-    [Y('midThigh'), 0.56],
-    [Y('crotch'), 0.82],
+    [Y('knee'), 0.34],
+    [Y('midThigh'), 0.62],
+    [Y('crotch'), 0.94],
   ]);
 
   for (const side of ['L', 'R'] as const) {
@@ -224,9 +224,26 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
     const cloth = (s: number, angle: number): number => {
       const y = axis.pointAt(s).y;
       const inward = Math.max(0, Math.cos(angle - outer + Math.PI));
-      return (
-        legSlack(y) * (1 - innerSquash(y) * inward ** 1.25) + foldAmp(y) * folds(s, angle) + bias
-      );
+      const squash = 1 - innerSquash(y) * inward ** 1.25;
+      return legSlack(y) * squash + foldAmp(y) * folds(s, angle) * squash + bias;
+    };
+
+    /**
+     * Ceiling on the traced radius for rays crossing the midline.
+     *
+     * Above the crotch the two thighs and the pelvis are one mass, so a ray
+     * fired inward from a leg's axis does not stop at the inseam — it travels
+     * straight through and exits on the *far* hip, sixteen centimetres away.
+     * `keepSide` then folds every one of those samples back onto the sagittal
+     * plane, and a hundred vertices landing on one plane is a fan with no
+     * surface normal: the crease ink pass reads it as one enormous fold and
+     * fills the fly and the seat with solid black. Stopping the ray at the
+     * midline keeps the inseam a seam.
+     */
+    const midlineCap = (s: number, angle: number): number => {
+      const inward = -Math.sin(angle) * sign;
+      if (inward < 0.25) return 9;
+      return (axis.pointAt(s).x * sign + 0.012) / inward;
     };
 
     const shell = buildShell(body, {
@@ -241,7 +258,8 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       // The top edge lives under the waistband; a hem bead there would swell
       // straight into the layer above it.
       toEdge: { fold: 0.012, roll: 0.005, rings: 3 },
-      keepSide: { normal: new THREE.Vector3(sign, 0, 0), d: -0.005, softness: 0.009 },
+      maxRadius: (s, _u, angle) => midlineCap(s, angle),
+      keepSide: { normal: new THREE.Vector3(sign, 0, 0), d: -0.004, softness: 0.008 },
       tileMetres: tex.garments.abada.tileMetres * WEAVE,
     });
     // Off the shadow map's receiving list, and this one is not cosmetic. The
@@ -428,8 +446,7 @@ function buildHoodie(
   const GOLD_SHADE = 0x8a5a0e;
   const Y = (l: Parameters<typeof landmarkY>[1]) => landmarkY(m, l);
 
-  const shoulderY = Y('shoulder');
-  const deltoidCrest = shoulderY + m.deltoidR * 1.06;
+  const armpitY = Y('armpit');
   const hemY = Y('navel');
 
   const axis = torsoAxis(body, Y('waist') - 0.10, m.neckBaseY + 0.10);
@@ -437,17 +454,21 @@ function buildHoodie(
   /**
    * Where the arm stops being covered.
    *
-   * A hanging arm is fused to the ribcage in the implicit body, so a torso
-   * garment traced against the trunk alone is *buried inside the deltoid* from
-   * the armpit all the way to the crest — and that is not a bug, it is the
-   * armhole: the cloth reappears at exactly the height where this bridge grows
-   * enough to reach the real arm surface and snap onto it. Moving the
-   * transition moves the armhole seam, and Davi's is cut high and wide, so it
-   * opens only in the last five centimetres under the crest and leaves the
-   * whole deltoid bare.
+   * A hanging arm is fused to the ribcage in the implicit body, so a garment
+   * traced against the trunk alone is *buried inside the deltoid* from the
+   * armpit up to the shoulder crest — and that is not a bug, it is the armhole:
+   * the cloth reappears at exactly the height where this bridge grows enough to
+   * reach the real arm surface and cap it. Moving the transition moves the
+   * armhole seam, and Davi's is cut higher than a gi's, so it opens later.
+   *
+   * The ramp is deliberately long. Made short, the cloth spends a couple of
+   * rings floating in the hollow above the clavicle instead of lying on
+   * anything, and its underside shows there as a black wedge between the
+   * shoulder and the panel; stretched over ten centimetres the same transition
+   * happens deep in the armpit, where the arm covers it.
    */
   const bridge = (s: number): number =>
-    0.15 * THREE.MathUtils.smoothstep(axis.pointAt(s).y, deltoidCrest - 0.055, deltoidCrest - 0.012);
+    0.15 * THREE.MathUtils.smoothstep(axis.pointAt(s).y, armpitY + 0.076, armpitY + 0.168);
 
   // The front opening. The arc stops 16° short of the sternum on each side, and
   // over the next 40° the hem climbs from the crop line to the collarbone —

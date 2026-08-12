@@ -128,9 +128,35 @@ node tools/shots/capture.mjs --scene tex                           # texture she
 node tools/shots/capture.mjs --scene lineup --post 0               # bypass post
 ```
 
-## Queued for integration (blocked on agents holding the files)
+## Frame budget status (after wave C stage work)
 
-1. **A matte pass for `measure.py`.** The per-figure mask uses a column median as
+Measured with `measure.py --matte`. **All five global targets now pass**, and
+they were hit without pushing cost onto another system — which is what the
+budget exists to prevent.
+
+| | review 002 | now | target |
+| --- | --- | --- | --- |
+| median luminance | 21.1 | **52.5** | 48–72 ✅ |
+| pixels below L=16 | 35.3% | **1.0%** | <8% ✅ |
+| pixels above L=128 | 2.5% | **10.6%** | >8% ✅ |
+| floor variation across x | 2.60× | **1.22×** | <1.4 ✅ |
+| background lift near figures | +60% | **+4.4%** | <10% ✅ |
+| live bands per fighter | 2 | **7–12** | ≥4 ✅ |
+| top histogram bin | 48–56% | **9–20%** | <30% ✅ |
+| shadow/lit value ratio | 0.14–0.27 | 0.24–0.41 | 0.60–0.75 ❌ |
+| shadow hue rotation | −33…−61 | −6…−140 | −25…−65 ❌ |
+| shadow-colour distance | 2.0 | 12.6 | >40 ❌ |
+
+The bloom halo and the relocated floor-pool bug are both genuinely gone. The
+remaining failures are all character shading, still in flight — the −140° outlier
+is the magenta blotching visible on skin.
+
+## Queued for integration
+
+1. ~~**A matte pass for `measure.py`.**~~ **Done** — built by the wave C stage
+   agent. `--scene lineup --matte 1` renders fighters flat-white on black with
+   ink hidden; `measure.py --matte <png>` uses it as an exact mask.
+   *Historical note, kept because it is a reusable lesson:* The per-figure mask uses a column median as
    a stand-in for "the background". That only holds while backdrop and floor are
    the same value — i.e. while the stage is nearly black. On a stage that meets
    the budget, the near floor passes the mask and every per-figure number becomes
@@ -142,7 +168,6 @@ node tools/shots/capture.mjs --scene lineup --post 0               # bypass post
    photometric alternative either admits the near-black ink and wrecks the hue
    statistics, or shifts the historical numbers so reviews 001/002 stop being
    comparable.
-   *Blocked on: the wave C stage agent, which owns `main.ts` and `measure.py`.*
 
 2. **Wire `stage.setContactPoints()`** for the `solo` scene too — the stage agent
    added the API and wired `lineup` only.
