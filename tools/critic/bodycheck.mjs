@@ -68,14 +68,50 @@ for (const def of ROSTER) {
     }
   }
   let boundary = 0, nonManifold = 0, misoriented = 0;
-  for (const e of edges.values()) {
+  // Where a defect is matters more than that there is one: a pinch is always a
+  // place where two surfaces pass within one grid cell of each other, and the
+  // fix is a modelling fix at that spot, not a mesher fix.
+  const wpos = new Float32Array(V * 3);
+  for (let i = 0; i < nv; i++) {
+    wpos[weld[i] * 3] = pos[i * 3];
+    wpos[weld[i] * 3 + 1] = pos[i * 3 + 1];
+    wpos[weld[i] * 3 + 2] = pos[i * 3 + 2];
+  }
+  const spots = [];
+  for (const [k, e] of edges) {
     if (e.n === 1) boundary++;
-    else if (e.n > 2) nonManifold++;
-    else if (e.dir !== 0) misoriented++;
+    else if (e.n > 2) {
+      nonManifold++;
+      const [u] = k.split('_').map(Number);
+      spots.push([wpos[u * 3], wpos[u * 3 + 1], wpos[u * 3 + 2]]);
+    } else if (e.dir !== 0) misoriented++;
   }
   const F = tris - degenerate;
   const E = edges.size;
   const euler = V - E + F;
+
+  // Components. Euler 2 is the *sum* over components, so two blobs and a
+  // handle read as 2 as readily as one clean body does; without this a
+  // detached fingertip can hide inside a passing number.
+  const parent = new Int32Array(V).map((_, i) => i);
+  const find = (a) => { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
+  for (const k of edges.keys()) {
+    const [u, v] = k.split('_').map(Number);
+    const ru = find(u), rv = find(v);
+    if (ru !== rv) parent[ru] = rv;
+  }
+  const comp = new Map();
+  for (let i = 0; i < V; i++) {
+    const r = find(i);
+    let c = comp.get(r);
+    if (!c) comp.set(r, (c = { n: 0, lo: [1e9, 1e9, 1e9], hi: [-1e9, -1e9, -1e9] }));
+    c.n++;
+    for (let a = 0; a < 3; a++) {
+      c.lo[a] = Math.min(c.lo[a], wpos[i * 3 + a]);
+      c.hi[a] = Math.max(c.hi[a], wpos[i * 3 + a]);
+    }
+  }
+  const parts = [...comp.values()].sort((a, b) => b.n - a.n);
 
   // Skin weights.
   const sw = built.geometry.getAttribute('skinWeight').array;
@@ -92,12 +128,12 @@ for (const def of ROSTER) {
   }
 
   const ok =
-    euler === 2 && boundary === 0 && nonManifold === 0 && misoriented === 0 &&
+    parts.length === 1 && euler === 2 && boundary === 0 && nonManifold === 0 && misoriented === 0 &&
     nan === 0 && empty === 0 && worstSum < 1e-4 && tris <= 26000;
   if (!ok) bad++;
 
   rows.push({ id: def.id, V, E, F, euler, boundary, nonManifold, misoriented, degenerate,
-              tris, nan, empty, worstSum, ms, ok });
+              tris, nan, empty, worstSum, ms, ok, spots, parts, H: m.height });
 }
 
 console.log('');
@@ -112,6 +148,23 @@ for (const r of rows) {
     `${r.worstSum.toExponential(1).padStart(11)}` +
     `${String(r.ms).padStart(6)}  ${r.ok ? 'OK' : 'FAIL'}`,
   );
+}
+for (const r of rows) {
+  if (r.parts.length > 1) {
+    console.log(`\n  ${r.id} has ${r.parts.length} components; strays (x/H, y/H, z/H box):`);
+    for (const c of r.parts.slice(1))
+      console.log(`    ${c.n} verts  [${c.lo.map((v) => (v / r.H).toFixed(3)).join(', ')}] .. ` +
+                  `[${c.hi.map((v) => (v / r.H).toFixed(3)).join(', ')}]`);
+  }
+  if (!r.spots.length) continue;
+  const seen = [];
+  for (const [x, y, z] of r.spots) {
+    if (seen.some((s) => Math.hypot(s[0] - x, s[1] - y, s[2] - z) < r.H * 0.03)) continue;
+    seen.push([x, y, z]);
+  }
+  console.log(`\n  ${r.id} pinch clusters (x/H, y/H, z/H):`);
+  for (const [x, y, z] of seen)
+    console.log(`    ${(x / r.H).toFixed(3)}  ${(y / r.H).toFixed(3)}  ${(z / r.H).toFixed(3)}`);
 }
 console.log('\n  euler must be 2, bdry/nonman/misor must be 0, tris <= 26000\n');
 

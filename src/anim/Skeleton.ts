@@ -217,12 +217,14 @@ export function rigMetrics(def: FighterDef): RigMetrics {
   const upperArmLen = armLen * 0.556;
   const forearmLen = armLen * 0.444;
 
-  // Hip joints sit at half the hip width, *or* far enough apart that the two
-  // thighs do not fuse across the midline — whichever is wider. Vera's thigh
-  // radius exceeds half her own hip width, so without the second term her legs
-  // merge into one column below the crotch and the inner-leg contour, which is
-  // half of what makes a stance read, disappears.
-  const hipJointX = Math.max(hipHalf * 0.52, thighR * 1.06);
+  // Hip joints track the authored hip width, so a wide-hipped fighter gets a
+  // wide stance. Note what is deliberately *not* done here: forcing the thighs
+  // apart so they clear each other. Vera's thigh radius is within a millimetre
+  // of half her own hip width, and a one-millimetre gap under a 25 mm mesh grid
+  // is worse than either touching or clearing — it pinches, and a pinch is a
+  // non-manifold edge. The adductor mass in `buildLeg` closes the crotch
+  // deliberately instead, which is also what the anatomy does.
+  const hipJointX = hipHalf * 0.52;
   const armJointX = shoulderHalf - deltoidR * 0.92;
 
   const handLen = H * (0.112 + 0.02 * build) * (1 - 0.04 * fem);
@@ -234,7 +236,9 @@ export function rigMetrics(def: FighterDef): RigMetrics {
   // joint. `asin` of the required lateral travel over the reach that produces
   // it, since the forearm keeps `A_POSE_FOREARM_RATIO` of the upper arm's
   // angle.
-  const need = hipJointX + thighR + palmHalf + H * 0.026 - armJointX;
+  // 1.35 palm widths, not one: the thumb reaches medially past the palm edge,
+  // and it is the thumb that would touch the thigh first.
+  const need = hipJointX + thighR + palmHalf * 1.35 + H * 0.026 - armJointX;
   const reach = upperArmLen + forearmLen * A_POSE_FOREARM_RATIO;
   const armSpread = THREE.MathUtils.clamp(
     Math.asin(THREE.MathUtils.clamp(need / reach, 0, 0.75)),
@@ -281,7 +285,7 @@ export function rigMetrics(def: FighterDef): RigMetrics {
     hipJointX,
     palmHalf,
     palmThick: handLen * 0.108,
-    fingerR: palmHalf * 0.235,
+    fingerR: palmHalf * 0.22,
     footHalf: footLen * 0.205,
     heelR: footLen * 0.15,
     toeLen: footLen * 0.185,

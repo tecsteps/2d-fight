@@ -669,23 +669,27 @@ export function buildBodyPlan(m: RigMetrics, j: JointMap): BodyPlan {
     sz: 0.65,
     k: 0.009 * H,
   });
-  // Nose. Small k so it stays a crisp wedge instead of melting into the face.
+  // Nose. Small k so it stays a crisp wedge instead of melting into the face —
+  // but not so small that the philtrum under it closes into a slot narrower
+  // than a grid cell, which is a pinch and shows up as a non-manifold edge.
   P.seg(
     'head',
     [0, headY + HL * 0.55, hz + HL * 0.24],
     [0, headY + HL * 0.33, hz + HL * 0.4],
     HL * 0.032,
     HL * 0.048,
-    { sx: 1.1, sz: 0.85, k: 0.0025 * H },
+    { sx: 1.1, sz: 0.85, k: 0.007 * H },
   );
   // Lips, then ears flattened against the skull.
-  P.point('head', [0, headY + HL * 0.24, hz + HL * 0.35], HW * 0.4, {
-    sy: 0.28,
-    sz: 0.36,
-    k: 0.005 * H,
+  P.point('head', [0, headY + HL * 0.225, hz + HL * 0.335], HW * 0.4, {
+    sy: 0.3,
+    sz: 0.38,
+    k: 0.007 * H,
   });
   P.point('head', [HW * 0.97, headY + HL * 0.45, hz - HL * 0.04], HL * 0.1, {
-    sx: 0.28,
+    // Thin enough to read as an ear, thick enough that the mesher can see it:
+    // at 0.28 the disc was under one grid cell and dropped out in patches.
+    sx: 0.42,
     sy: 1.1,
     sz: 0.6,
     k: 0.004 * H,
@@ -749,6 +753,16 @@ function buildArm(P: Plan, m: RigMetrics, j: JointMap): void {
     k: 0.013 * H,
   });
 
+  // Olecranon. An elbow is a wider, bonier joint than the forearm below it, and
+  // without a mass here the two limb tubes meet in a crease ring that the
+  // mesher resolves as a non-manifold edge on the leanest fighter.
+  P.point('forearmL', elbow, m.forearmR * 1.12, {
+    sx: 1.0,
+    sy: 1.1,
+    sz: 1.05,
+    k: 0.014 * H,
+  });
+
   const fa = m.forearmR;
   P.tube({
     bones: ['forearmL'],
@@ -759,44 +773,170 @@ function buildArm(P: Plan, m: RigMetrics, j: JointMap): void {
     k: 0.005 * H,
   });
 
-  // Hand: a mitten. At the distance a fighting-game camera sits at, separated
-  // fingers are two pixels of noise; the palm slab, the finger block and the
-  // thumb are what actually read.
+  buildHand(P, m, elbow, wrist);
+}
+
+/**
+ * The hand.
+ *
+ * Reviews 001 and 002 both called this out and both times it was answered with
+ * a mitten and the argument that fingers are two pixels at gameplay size. Two
+ * things are wrong with that argument. The hand is the *business end* of a
+ * fighting game and it is where the eye goes, so it is the last thing that
+ * should be under-modelled; and two pixels is a consequence of building the
+ * hand at anatomical scale, which no fighting game does.
+ *
+ * So the hand is built ~15% oversized (`palmHalf` in `rigMetrics`) and out of
+ * the four masses that actually make a hand read:
+ *
+ * - a **palm slab** that is a rounded box, not a cylinder — the flatness is
+ *   what separates a hand from a paw;
+ * - **knuckle heads** standing proud on the back of the hand at the metacarpal
+ *   line, which is the break the fingers rotate about;
+ * - **four fingers**, each in two segments with a bend at the middle joint, and
+ *   fanned so the gaps open toward the tips. Near the knuckles they merge into
+ *   one grooved mass — which is what a hand does — and only separate where a
+ *   silhouette can show it;
+ * - a **thumb** that leaves the palm at ~35° in plan and ~25° out of the palm
+ *   plane, off a metacarpal that starts *inside* the hand. A thumb stuck on the
+ *   side as one cone is the single loudest tell that a hand was not modelled.
+ *
+ * Everything is placed in a hand frame — `dir` down the hand, `across` along
+ * the knuckles, `palmN` out of the palm — so the whole thing rotates with the
+ * pronation roll and survives being posed into a fist, an open palm or a blade
+ * hand without any of the masses needing to move relative to each other.
+ */
+function buildHand(P: Plan, m: RigMetrics, elbow: THREE.Vector3, wrist: THREE.Vector3): void {
+  const H = m.height;
+  const HL = m.handLen;
+  const PW = m.palmHalf;
+  const PT = m.palmThick;
+  const FR = m.fingerR;
+
   const dir = wrist.clone().sub(elbow).normalize();
   const side = new THREE.Vector3(1, 0, 0).addScaledVector(dir, -dir.x).normalize();
-  const front = new THREE.Vector3(0, 0, 1).addScaledVector(dir, -dir.z).normalize();
-  const tipEnd = wrist.clone().addScaledVector(dir, m.handLen * 0.97);
+  const front = new THREE.Vector3(0, 0, 1).addScaledVector(dir, -dir.z);
+  front.addScaledVector(side, -front.dot(side)).normalize();
+
+  // Pronation. A relaxed hanging hand does not present its back squarely to
+  // the front: it rolls in by ~20°, which is what puts the thumb forward and
+  // is most of the difference between a hand and a table-tennis bat.
+  // Kept modest, and the reason is meshing as much as anatomy: `palmN` picks up
+  // an X component as the roll grows, which fattens every finger along X — the
+  // one axis the gaps between fingers are measured on. At 0.36 the fingers were
+  // wider in X than the gaps between them were, and the mesher welded them.
+  const roll = 0.2;
+  const palmN = front
+    .clone()
+    .multiplyScalar(-Math.cos(roll))
+    .addScaledVector(side, -Math.sin(roll))
+    .normalize();
+  const across = new THREE.Vector3().crossVectors(dir, palmN).normalize();
+  // Handed to every primitive below as its local +Z, so `sz` means "thickness
+  // through the palm" everywhere in this function regardless of how the arm is
+  // rotated. Without it `sz` would mean "world front-to-back" and the hand
+  // would flatten along the wrong axis the moment the roll was touched.
+  const REF: [number, number, number] = [palmN.x, palmN.y, palmN.z];
+
+  /** A point in the hand frame: `t` along the hand, `a` across it, `n` out of the palm. */
+  const at = (t: number, a: number, n: number): THREE.Vector3 =>
+    wrist
+      .clone()
+      .addScaledVector(dir, HL * t)
+      .addScaledVector(across, a)
+      .addScaledVector(palmN, n);
+
+  // Palm slab. Widening from the wrist to the knuckle line and always thinner
+  // than it is wide; `n` climbs toward 3 so the section is a rounded box.
   P.tube({
     bones: ['handL'],
-    pts: [
-      wrist,
-      wrist.clone().addScaledVector(dir, m.handLen * 0.26),
-      wrist.clone().addScaledVector(dir, m.handLen * 0.62),
-      tipEnd,
-    ],
-    r: [m.wristR * 1.0, m.wristR * 1.3, m.wristR * 1.34, m.wristR * 0.66],
-    sz: [0.66, 0.54, 0.5, 0.46],
-    n: [2.3, 2.8, 3.0, 3.0],
-    sx: 1.08,
-    k: 0.008 * H,
+    pts: [at(0, 0, 0), at(0.18, PW * 0.05, PT * 0.06), at(0.38, PW * 0.06, PT * 0.05), at(0.545, PW * 0.04, 0)],
+    r: [m.wristR * 1.02, PW * 0.82, PW * 0.97, PW * 0.99],
+    sz: [PT / (m.wristR * 1.02) * 0.98, (PT * 1.02) / (PW * 0.82), (PT * 1.0) / (PW * 0.97), (PT * 0.92) / (PW * 0.99)],
+    n: [2.4, 2.9, 3.1, 3.1],
+    ref: REF,
+    k: 0.006 * H,
   });
-  // Thumb: medial and forward, the way a relaxed hanging hand carries it.
-  P.seg(
-    'handL',
-    wrist
-      .clone()
-      .addScaledVector(dir, m.handLen * 0.1)
-      .addScaledVector(side, -m.wristR * 0.85)
-      .addScaledVector(front, m.wristR * 0.3),
-    wrist
-      .clone()
-      .addScaledVector(dir, m.handLen * 0.5)
-      .addScaledVector(side, -m.wristR * 1.4)
-      .addScaledVector(front, m.wristR * 0.55),
-    m.wristR * 0.5,
-    m.wristR * 0.38,
-    { k: 0.01 * H },
-  );
+  // Thenar and hypothenar — the two fleshy pads either side of the palm. They
+  // are what give the palm an outline that is not a rectangle.
+  P.point('handL', at(0.3, -PW * 0.5, PT * 0.42), PW * 0.42, {
+    sx: 0.9, sy: 1.25, sz: 0.52, n: 2.4, k: 0.012 * H,
+  });
+  P.point('handL', at(0.34, PW * 0.6, PT * 0.3), PW * 0.34, {
+    sx: 0.8, sy: 1.5, sz: 0.6, n: 2.4, k: 0.012 * H,
+  });
+
+  // Fingers. Index first, so index and thumb are both on the -across side.
+  // Lengths and radii follow a real hand: middle longest, pinky shortest and
+  // thinnest, and the knuckle line itself is an arc, not a straight edge.
+  //
+  // The fan is deliberately back-loaded. Fingers that diverge evenly from the
+  // knuckle spend most of their length in the gap range that is wider than the
+  // blend radius and narrower than a grid cell — which is exactly the range
+  // that pinches, and pinches are non-manifold edges. Held together through the
+  // proximal segment and then thrown apart through the distal one, the surface
+  // is unambiguously one mass, then unambiguously four, and the crossing is
+  // over in a few millimetres.
+  const kx = [-0.735, -0.245, 0.245, 0.735];
+  const tipx = [-1.2, -0.4, 0.45, 1.25];
+  const len = [0.41, 0.455, 0.43, 0.375];
+  const rad = [1.0, 1.02, 0.98, 0.92];
+  // Knuckle t: the metacarpal heads are not level — index and pinky sit back.
+  const kt = [0.5, 0.535, 0.52, 0.485];
+
+  for (let f = 0; f < 4; f++) {
+    const r0 = FR * rad[f];
+    const a0 = PW * kx[f];
+    const a1 = PW * tipx[f];
+    const t0 = kt[f];
+    const t2 = t0 + len[f];
+    const t1 = t0 + len[f] * 0.5;
+
+    // Knuckle head, proud on the back of the hand. This is the break the
+    // review asked for and it is the thing that reads first in a fist.
+    P.point('handL', at(t0 - 0.02, a0, -PT * 0.2), r0 * 1.14, {
+      sx: 1.05, sy: 0.85, sz: 1.15, n: 2.3, k: 0.006 * H,
+    });
+    // Proximal segment, then the distal one bent into the palm at the middle
+    // joint, which is what keeps a relaxed hand from reading as a rake.
+    P.seg(
+      'handL',
+      at(t0, a0, -PT * 0.06),
+      at(t1, THREE.MathUtils.lerp(a0, a1, 0.28), PT * 0.2),
+      r0,
+      r0 * 0.9,
+      { sz: 1.24, n: 2.7, ref: REF, k: 0.005 * H },
+    );
+    P.seg(
+      'handL',
+      at(t1, THREE.MathUtils.lerp(a0, a1, 0.28), PT * 0.2),
+      at(t2, a1, PT * 0.62),
+      r0 * 0.92,
+      r0 * 0.84,
+      { sz: 1.22, n: 2.6, ref: REF, k: 0.003 * H },
+    );
+  }
+
+  // Thumb. Metacarpal from inside the palm, then the two phalanges with a
+  // break between them. The divergence angles are the point: ~35° in plan and
+  // ~25° out of the palm plane at the metacarpal, opening further at the tip.
+  // Note how far out of the palm plane the tip sits. It is not decoration:
+  // brought back toward the fingers, the tip blends into the index and the web
+  // between them closes into a ring, which turns the body into a genus-1
+  // surface. A thumb has to be visibly *off* the hand, not beside it.
+  //
+  // Most of that separation is carried along `across` rather than along the
+  // palm normal, and that is a meshing decision as much as an anatomical one:
+  // `across` is very nearly the X axis, and X is the axis the mesher refines
+  // around the hands. A thumb held forward instead of out would be separated
+  // along Z, at the unrefined step, and would weld itself to the index finger.
+  const tA = at(0.14, -PW * 0.4, PT * 0.34);
+  const tB = at(0.42, -PW * 1.06, PT * 0.9);
+  const tC = at(0.62, -PW * 1.32, PT * 1.3);
+  const tD = at(0.76, -PW * 1.4, PT * 1.62);
+  P.seg('handL', tA, tB, FR * 0.72, FR * 0.62, { sz: 1.25, n: 2.5, ref: REF, k: 0.009 * H });
+  P.seg('handL', tB, tC, FR * 0.66, FR * 0.58, { sz: 1.35, n: 2.6, ref: REF, k: 0.004 * H });
+  P.seg('handL', tC, tD, FR * 0.56, FR * 0.5, { sz: 1.4, n: 2.6, ref: REF, k: 0.0035 * H });
 }
 
 function buildLeg(P: Plan, m: RigMetrics, j: JointMap): void {
@@ -805,7 +945,6 @@ function buildLeg(P: Plan, m: RigMetrics, j: JointMap): void {
   const hip = j.thighL;
   const knee = j.shinL;
   const ankle = j.footL;
-  const toe = j.toeL;
   const lerp = (a: THREE.Vector3, b: THREE.Vector3, t: number) => a.clone().lerp(b, t);
 
   const th = m.thighR;
@@ -832,6 +971,20 @@ function buildLeg(P: Plan, m: RigMetrics, j: JointMap): void {
     sz: 0.55,
     k: 0.02 * H,
   });
+  // Adductors. They run from high on the pubic ramus down the inside of the
+  // thigh, and they reach *past* the midline so the two sides meet — which is
+  // both what a standing figure does and what keeps the crotch a clean fused
+  // join rather than a sub-grid gap the mesher has to guess at. The taper is
+  // fast on purpose: the inner-leg contour is the line where they part, and a
+  // slow taper puts that line somewhere vague near the knee.
+  P.seg(
+    'thighL',
+    new THREE.Vector3(th * 0.2, hip.y - m.torsoLen * 0.1, -th * 0.06),
+    lerp(hip, knee, 0.52).add(new THREE.Vector3(-th * 0.06, 0, th * 0.02)),
+    th * 0.4,
+    th * 0.26,
+    { sz: 0.86, k: 0.02 * H },
+  );
 
   P.tube({
     bones: ['shinL'],
@@ -857,30 +1010,138 @@ function buildLeg(P: Plan, m: RigMetrics, j: JointMap): void {
     k: 0.007 * H,
   });
 
-  // Foot. Local +Z is world up for these primitives, so `sz` reads as height —
-  // and each centre is placed by its own half-height, which puts the sole on
-  // y = 0 exactly, for every fighter, without nudging the rig.
+  buildFoot(P, m, ankle);
+}
+
+/**
+ * The foot.
+ *
+ * What was here was a swept wedge with a flat sole from heel to tip, no ankle
+ * narrowing and no toes — review 001 called it a ski tip and review 002 found
+ * it unchanged. The four things it was missing are the four things that make a
+ * foot read, and each of them is load-bearing for a different view:
+ *
+ * - the **ankle** is a narrowing between two masses. It only exists if the foot
+ *   mass stops short of the shin's width, so the heel and the instep are sized
+ *   against `ankleR` rather than against the foot length, and the two malleoli
+ *   sit on it as bumps — medial high and forward, lateral low and back, which
+ *   is the asymmetry every viewer knows without being able to name;
+ * - the **arch** lifts the sole between heel and ball. It is the read that says
+ *   a foot is bearing weight, and it is invisible from the front and obvious in
+ *   profile — which is the view a fighting game spends most of its time in;
+ * - the **heel** is a separate rounded mass behind and below the ankle, which
+ *   is what stops the leg looking pushed into a slipper;
+ * - the **toe break** is a step down in the profile at the ball of the foot,
+ *   with the toes as their own masses below it. Without it the foot cannot roll
+ *   through a step: there is no line for the sole to hinge about, so a walk
+ *   cycle slides the whole wedge.
+ *
+ * Local +Z is world up for everything here, so `sz` reads as height, and each
+ * centre is placed at its own half-height — which puts the sole on y = 0
+ * exactly, for every fighter, without nudging the rig.
+ */
+function buildFoot(P: Plan, m: RigMetrics, ankle: THREE.Vector3): void {
+  const H = m.height;
   const UP: [number, number, number] = [0, 1, 0];
   const FL = m.footLen;
-  const fw = FL * 0.185;
-  const rs = [fw * 0.78, fw * 0.94, fw * 1.0, fw * 0.97, fw * 0.7];
-  const hs = [0.74, 0.86, 0.7, 0.48, 0.34];
-  const zs = [ankle.z - FL * 0.16, ankle.z - FL * 0.02, ankle.z + FL * 0.16, toe.z, toe.z + FL * 0.2];
-  const xs = [ankle.x, ankle.x, (ankle.x + toe.x) * 0.5, toe.x, toe.x];
-  P.point('footL', new THREE.Vector3(ankle.x, ankle.y, ankle.z), m.ankleR * 1.02, {
-    sy: 1.1,
-    sz: 0.9,
-    k: 0.014 * H,
+  const HW = m.footHalf;
+  const A = m.ankleY;
+  const AR = m.ankleR;
+  const az = ankle.z;
+  const ax = ankle.x;
+  // Toes point very slightly outboard — a stance with the feet turned out
+  // 25° is a ballet position, not a fighting stance. Review 001 measured the
+  // old feet as splayed; this is 4°.
+  const tx = ax + FL * 0.035;
+
+  // Heel: its own mass, behind and below the ankle.
+  P.point('footL', new THREE.Vector3(ax, A * 0.62, az - FL * 0.185), m.heelR, {
+    sx: 0.82,
+    sy: (A * 0.62) / m.heelR,
+    sz: 0.94,
+    n: 2.4,
+    k: 0.01 * H,
   });
+  // Tarsus: the block the ankle sits on. Narrower than the ball of the foot,
+  // which is what leaves the ankle a waist rather than a column.
+  P.point('footL', new THREE.Vector3(ax, A * 0.66, az + FL * 0.02), AR * 1.16, {
+    sx: 0.92,
+    sy: (A * 0.66) / (AR * 1.16),
+    sz: 1.5,
+    n: 2.5,
+    k: 0.012 * H,
+  });
+
+  // Malleoli. Small, but they are the whole reason an ankle reads as a joint.
+  P.point('footL', new THREE.Vector3(ax - AR * 0.78, A * 1.12, az + FL * 0.012), AR * 0.4, {
+    sx: 0.85, sy: 0.95, sz: 0.9, k: 0.006 * H,
+  });
+  P.point('footL', new THREE.Vector3(ax + AR * 0.86, A * 0.92, az - FL * 0.03), AR * 0.36, {
+    sx: 0.85, sy: 0.95, sz: 0.9, k: 0.006 * H,
+  });
+  // Achilles: a flattened ridge running down the back of the ankle into the
+  // heel. Cheap, and it is what fills the hollow either side of it.
+  P.seg(
+    'footL',
+    new THREE.Vector3(ax, A * 2.05, az - FL * 0.145),
+    new THREE.Vector3(ax, A * 0.85, az - FL * 0.185),
+    AR * 0.6,
+    AR * 0.78,
+    // Deep rather than flat: at 0.62 the ridge was thinner front-to-back than
+    // one grid cell and the mesher lost stretches of it.
+    { sx: 0.9, sz: 0.95, k: 0.012 * H },
+  );
+
+  // The body of the foot: heel to the ball, arched. Heights are fractions of
+  // the ankle height, so the instep tops out just above the ankle joint on
+  // every fighter and the foot never swallows the leg.
+  const zs = [az - FL * 0.2, az - FL * 0.05, az + FL * 0.14, az + FL * 0.36, az + FL * 0.5];
+  const rs = [HW * 0.74, HW * 0.8, HW * 0.83, HW * 1.0, HW * 0.99];
+  // Half-heights, then converted to the tube's radius multiplier.
+  const hh = [A * 0.6, A * 0.72, A * 0.55, A * 0.37, A * 0.29];
+  // The arch: the sole lifts between heel and ball, and the mid-foot slides
+  // outboard so the medial edge lifts further than the lateral one.
+  const lift = [0, FL * 0.012, FL * 0.05, 0, 0];
+  const dx = [0, 0, HW * 0.1, HW * 0.03, 0];
   P.tube({
-    bones: ['footL', 'footL', 'footL', 'toeL', 'toeL'],
-    pts: rs.map((r, i) => new THREE.Vector3(xs[i], H * 0.002 + r * hs[i], zs[i])),
+    bones: ['footL', 'footL', 'footL', 'footL', 'toeL'],
+    pts: zs.map((z, i) => new THREE.Vector3(
+      THREE.MathUtils.lerp(ax, tx, i / (zs.length - 1)) + dx[i],
+      hh[i] + lift[i],
+      z,
+    )),
     r: rs,
-    sz: hs,
-    n: [2.6, 2.8, 3.0, 3.0, 3.2],
+    sz: hh.map((h, i) => h / rs[i]),
+    n: [2.5, 2.7, 2.9, 3.1, 3.2],
     ref: UP,
     k: 0.005 * H,
   });
+
+  // Toes. Big toe distinct, the other four merged into a scalloped group —
+  // which is what a toe reads as at 4 px, and is honest about it: five fully
+  // separated toes at this scale is noise that the ink pass then draws.
+  const toeA = [-0.6, -0.15, 0.16, 0.42, 0.64];
+  const toeR = [0.33, 0.21, 0.195, 0.175, 0.15];
+  const toeL = [1.0, 0.97, 0.9, 0.79, 0.64];
+  const toeK = [0.004, 0.0028, 0.0028, 0.0028, 0.0028];
+  const baseZ = az + FL * 0.44;
+  for (let t = 0; t < 5; t++) {
+    const r0 = HW * toeR[t];
+    const r1 = r0 * 0.86;
+    // Toes fan very slightly and the small ones curl down at the tip.
+    const x0 = tx + HW * toeA[t] * 0.92;
+    const x1 = tx + HW * toeA[t] * 1.08;
+    const zEnd = baseZ + m.toeLen * toeL[t];
+    const szT = t === 0 ? 0.92 : 0.8;
+    P.seg(
+      'toeL',
+      new THREE.Vector3(x0, r0 * szT, baseZ - m.toeLen * 0.35),
+      new THREE.Vector3(x1, r1 * szT * 0.94, zEnd),
+      r0,
+      r1,
+      { sx: 0.94, sz: szT, n: 2.4, ref: UP, k: toeK[t] * H },
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -966,9 +1227,9 @@ const EDGE = [
 ];
 
 function surfaceNets(plan: BodyPlan, density: number): RawMesh {
-  const { prims, metrics: m } = plan;
+  const { prims, metrics: m, joints: j } = plan;
   const H = m.height;
-  const step = H / 72 / density;
+  const step = H / 58 / density;
 
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
@@ -980,14 +1241,49 @@ function surfaceNets(plan: BodyPlan, density: number): RawMesh {
   }
   const pad = step * 2.5;
 
+  // Where the samples bunch up. Fingers and toes are an order of magnitude
+  // smaller than a thigh and the uniform step that meshes a thigh cannot see
+  // them at all — a 12 mm finger under a 25 mm grid is a bump, which is exactly
+  // how the hand ended up a mitten twice.
+  //
+  // Grading one axis at a time is what makes this affordable: extra samples
+  // along X create quads only on surfaces that face Y or Z, so refining a slab
+  // that contains nothing but the two hands costs hand triangles. The hand
+  // band is therefore keyed off the wrist joint and the palm width rather than
+  // being a fixed fraction of height, so it tracks whatever the roster does.
+  const wristX = j.handL.x;
+  const handX0 = wristX - m.palmHalf * 1.55;
+  const handX1 = wristX + m.palmHalf * 1.4;
+  const fingerY = j.handL.y - m.handLen * 1.02;
+  // The hand's own z slab: the palm is a 45 mm plate and the fingers are 20 mm
+  // rods hanging off it, both of which sit inside a single unrefined cell.
+  const handZ0 = j.handL.z - m.palmThick * 2.6;
+  const handZ1 = j.handL.z + m.palmThick * 1.1;
+
   const xs = gradedAxis(minX - pad, maxX + pad, step, [
-    { lo: -0.1 * H, hi: 0.1 * H, mul: 2.4 },
+    { lo: -0.1 * H, hi: 0.1 * H, mul: 2.2 },
+    { lo: handX0, hi: handX1, mul: 2.8 },
+    { lo: -handX1, hi: -handX0, mul: 2.8 },
   ]);
   const ys = gradedAxis(minY - pad, maxY + pad, step, [
     { lo: m.neckBaseY - 0.02 * H, hi: H + 0.02 * H, mul: 2.6 },
-    { lo: -0.02 * H, hi: 0.085 * H, mul: 1.7 },
+    { lo: -0.02 * H, hi: m.ankleY * 1.5, mul: 2.2 },
+    // Split in two: the fingers need the resolution, the palm does not, and
+    // the palm half of the band is the half that also contains both thighs.
+    { lo: fingerY, hi: j.handL.y - m.handLen * 0.4, mul: 2.15 },
+    { lo: j.handL.y - m.handLen * 0.4, hi: j.handL.y + m.handLen * 0.12, mul: 1.25 },
   ]);
-  const zs = gradedAxis(minZ - pad, maxZ + pad, step, [{ lo: -0.01 * H, hi: 0.12 * H, mul: 1.5 }]);
+  const zs = gradedAxis(minZ - pad, maxZ + pad, step, [
+    { lo: -0.01 * H, hi: 0.12 * H, mul: 1.5 },
+    // Kept narrow deliberately: a z band is the most expensive kind, because
+    // every surface anywhere in the slab pays for it, and this slab cuts
+    // through the middle of the torso. Widened to the whole front of the body
+    // it cost 4300 triangles; keyed to the hand it costs a third of that.
+    { lo: handZ0, hi: handZ1, mul: 2.4 },
+    // The toe break and the arch are both features along the length of the
+    // foot, and the foot is the only thing this far forward and this low.
+    { lo: j.footL.z + m.footLen * 0.2, hi: j.footL.z + m.footLen * 0.82, mul: 2.1 },
+  ]);
 
   const nx = xs.length, ny = ys.length, nz = zs.length;
   const field = new Float32Array(nx * ny * nz).fill(FAR);

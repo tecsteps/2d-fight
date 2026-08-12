@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { BoneName } from '../../../anim/contract';
 import type { FighterDef } from '../../../data/roster';
 import type { BuiltCharacter } from '../rig';
+import { createOutlineMesh } from '../../../render/npr';
 import { fighterTextures } from '../../textures';
 import {
   attachGarment,
@@ -68,8 +69,15 @@ const WEAVE = 0.55;
 
 const UP = new THREE.Vector3(0, 1, 0);
 
-/** How far each trouser leg reaches past the sagittal plane. See `midlineCap`. */
-const PAST = 0.026;
+/**
+ * How far past the sagittal plane an inward trouser ray may reach, in metres.
+ *
+ * The two legs overlap by twice this, which is what closes the inseam: cut
+ * flush, the pair leaves a slot you can see the body through, because at the
+ * height where the thighs have parted neither shell reaches the plane on its
+ * own. See `midlineCap`.
+ */
+const PAST = 0.005;
 
 /** The trunk. Anything a torso garment should lie on, and nothing it should engulf. */
 const TORSO = (b: BoneName): boolean =>
@@ -172,9 +180,9 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
 
   const legSlack = ramp([
     [waistTopY, 0.008],
-    [Y('hip'), 0.013],
-    [Y('crotch') - 0.03, 0.025],
-    [Y('midThigh'), 0.037],
+    [Y('hip'), 0.010],
+    [Y('crotch') - 0.03, 0.018],
+    [Y('midThigh'), 0.034],
     [Y('knee') + 0.05, 0.044],
     [Y('knee'), 0.045],
     [Y('calf'), 0.043],
@@ -192,16 +200,41 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
     [cuffLowY, 0.0006],
   ]);
   /**
-   * How hard the inner face is flattened.
+   * How hard the slack is taken out, by height.
    *
    * Full at the crotch, where two 10 cm-radius tubes would otherwise inflate
    * straight through each other, and released by the knee, where the legs have
    * parted and the cloth is free to hang.
    */
   const innerSquash = ramp([
-    [Y('knee'), 0.34],
-    [Y('midThigh'), 0.62],
+    [Y('knee'), 0.44],
+    [Y('midThigh'), 0.74],
     [Y('crotch'), 0.94],
+  ]);
+  /**
+   * Where that flattening applies, around the leg. 0° is the leg's front, -90°
+   * is the midline, 180° the back — read in the *left* leg's frame, with the
+   * right leg's angle negated onto it so one profile serves both.
+   *
+   * The whole back-inner quadrant is included, not just the inseam, and the
+   * gluteal cleft is the reason. An offset surface self-intersects in a
+   * concavity as soon as the lift passes the radius of curvature, and the cleft
+   * is the tightest concavity on the figure — two centimetres of slack there
+   * turns the cloth inside out over the inner half of each buttock. That patch
+   * is then culled by the shading pass and drawn by the inverted ink hull, which
+   * is why a garment fault shows up as a black hole rather than as a crease.
+   */
+  const medialEase = byAngle([
+    [90, 0],
+    [40, 0],
+    [10, 0.14],
+    [-20, 0.44],
+    [-50, 0.80],
+    [-90, 1.0],
+    [-130, 1.0],
+    [-160, 0.92],
+    [180, 0.74],
+    [140, 0.14],
   ]);
 
   for (const side of ['L', 'R'] as const) {
@@ -226,28 +259,26 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
 
     const cloth = (s: number, angle: number): number => {
       const y = axis.pointAt(s).y;
-      const inward = Math.max(0, Math.cos(angle - outer + Math.PI));
-      const squash = 1 - innerSquash(y) * inward ** 1.25;
+      const squash = 1 - innerSquash(y) * medialEase(angle * sign);
       return legSlack(y) * squash + foldAmp(y) * folds(s, angle) * squash + bias;
     };
 
     /**
-     * Ceiling on the traced radius for rays crossing the midline.
+     * The inseam, as a ceiling on the traced radius rather than as a clip.
      *
      * Above the crotch the two thighs and the pelvis are one mass, so a ray
      * fired inward from a leg's axis does not stop at the inseam — it travels
      * straight through and exits on the *far* hip, sixteen centimetres away.
-     * `keepSide` then folds every one of those samples back onto the sagittal
-     * plane, and a hundred vertices landing on one plane is a fan with no
-     * surface normal: the crease ink pass reads it as one enormous fold and
-     * fills the fly and the seat with solid black.
+     * The obvious answer is `keepSide` on the sagittal plane, and it is wrong
+     * here: it moves finished vertices, so a deep excursion comes back as a fold
+     * whose winding is reversed, and an inverted patch on a garment is an
+     * inverted *ink hull* — its back faces win the depth test and the seat and
+     * the fly fill with flat black. (Confirmed by rendering the abadá with its
+     * outline suppressed: the geometry is fine, the ink is not.)
      *
-     * So an inward ray is stopped once it has crossed the midline by `PAST`,
-     * which bounds how much cloth `keepSide` can ever be asked to fold. The
-     * margin is deliberately not tight: the two shells have to meet across the
-     * gluteal cleft and across the fly, and the part of each that reaches over
-     * to do it is buried inside the pelvis anyway — it costs nothing and it is
-     * the difference between a seam and a hole.
+     * Capping the ray instead never reverses anything. The samples that would
+     * have crossed land on one plane in order, so the surface simply goes flat
+     * for the last few degrees — which is what cloth does across a groove.
      */
     const midlineCap = (s: number, angle: number): number => {
       const inward = -Math.sin(angle) * sign;
@@ -267,9 +298,6 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       // straight into the layer above it.
       toEdge: { fold: 0.012, roll: 0.005, rings: 3 },
       maxRadius: (s, _u, angle) => midlineCap(s, angle),
-      // A backstop, not the mechanism: `midlineCap` has already bounded the
-      // excursion, and this only catches the rays it releases.
-      keepSide: { normal: new THREE.Vector3(sign, 0, 0), d: -PAST - 0.002, softness: 0.010 },
       tileMetres: tex.garments.abada.tileMetres * WEAVE,
     });
     // Off the shadow map's receiving list, and this one is not cosmetic. The
@@ -279,7 +307,7 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
     // of shadow texels, and cream at the bottom of a cel ramp is black. What you
     // get is a stair-stepped blot the size of a hand. Nothing else is casting
     // onto these shells that the ramp does not already describe.
-    attachGarment(rig, {
+    const abada = attachGarment(rig, {
       name: `abada${side}`,
       geometry: shell.geometry,
       kind: 'cloth',
@@ -288,7 +316,33 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       tex: tex.garments.abada,
       normalScale: 0.85,
       specular: 0.16,
-    }, out).receiveShadow = false;
+      outlineWidth: 0.6,
+    }, out);
+    abada.receiveShadow = false;
+    /**
+     * Inked here rather than by the pass `buildCostume` runs at the end — which
+     * skips anything already carrying an ink shell — because the abadá is the
+     * one garment in the outfit that cannot take the house line.
+     *
+     * The ink shell is the geometry drawn back-faced and pushed outward by a
+     * fixed number of *pixels*. On a surface running steeply away from the eye
+     * that lateral push crosses a lot of depth, so the shell's far side lands
+     * in front of the near one and the line stops being a line: over the seat,
+     * where the cloth turns hard into the gap between the legs, a four-pixel
+     * contour fills a hand-sized patch. Thinning it and warming it turns the
+     * residue into the shadow that belongs in that crease anyway, and a lighter
+     * line is what an inker uses on white cloth regardless. The interior-crease
+     * overlay goes for the same reason: it keys on depth gradient, and the
+     * crotch of a loose trouser is nothing but depth gradient.
+     */
+    createOutlineMesh(abada, {
+      crease: false,
+      color: 0x33251b,
+      width: 1.6,
+      minWidth: 0.9,
+      maxWidth: 2.4,
+      lowerBias: 0.2,
+    });
 
     // The outseam stripe. Same axis, same fold field, same angle — so it is a
     // rigid 3 mm lift of the trouser surface and can never dip into it.
