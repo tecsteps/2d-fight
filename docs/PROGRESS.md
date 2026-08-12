@@ -28,7 +28,7 @@ artifact instead of updating this one.
 | System | State | Critic score |
 | --- | --- | --- |
 | Build + capture pipeline | ✅ green | — |
-| **Overall frame (review 002)** | 🔨 | **15 / 50 — would not win** |
+| **Overall frame (review 003)** | 🔨 | **18 / 50 — would not win** |
 | Deterministic sim core (loop, RNG, input) | ✅ landed | — |
 | Roster data (4 fighters) | ✅ landed | — |
 | Character rig + body mesh | ✅ landed | — |
@@ -89,6 +89,14 @@ Design sheets in `/reference` (art direction only — never imported).
 | --- | --- | --- | --- |
 | [001](reviews/001-lineup-baseline.md) | baseline lineup | 13 / 50 | no — ~15% there |
 | [002](reviews/002-first-dressed.md) | first dressed lineup | 15 / 50 | no — ~18% there |
+| [003](reviews/003-dressed-roster.md) | dressed roster | 18 / 50 | no — ~27% there |
+
+**Review 003 caught us gaming the budget twice**: `pct_above_128` was passed by
+brightening an empty floor plane (only 2.2% of the frame was bright *character*),
+and `topbin`/`bands` were passed at whole-character granularity that averages a
+navy gi with bare skin. Both holes are closed in `FRAME_BUDGET.md`. Its blunt
+summary: the seven criteria with no metric have moved **2 points in three
+reviews**; the two that are measured moved 4.
 
 **Review 002 found a systemic failure, not just defects:** the ink fix and the
 lighting fix cancelled each other out. Each agent passed its own metric; the

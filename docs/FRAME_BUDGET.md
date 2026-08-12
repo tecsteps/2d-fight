@@ -33,7 +33,7 @@ Measure on the `lineup` scene at 1920×1080 with post on, using the helper in
 | --- | --- | --- |
 | Median frame luminance | **48–72** | 21 currently. KOF XIII stages sit mid-range so fighters can own both ends. |
 | Pixels below L=16 | **< 8%** | 35.3% currently. A third of the frame crushed to black is not mood, it is an absent value structure. |
-| Pixels above L=128 | **> 8%** | 2.5% currently. The top 30% of the range is used by 0.1% of pixels. |
+| Pixels above L=128, **within the matte** | **> 8% of character pixels** | Measured on characters only since review 003 — the frame-wide version was passed by brightening empty floor. |
 | Channel clipping | **0.00%** | Already met — keep it. |
 
 ### Characters
@@ -57,6 +57,43 @@ Measure on the `lineup` scene at 1920×1080 with post on, using the helper in
 | Background luminance lift within 60px of a figure | **< 10%** | +60% currently. A hand-drawn sprite has zero bleed into the background; this is bloom and it is the loudest 3D tell in the frame. |
 | Floor luminance variation at foot height, across x | **< 1.4×** | 2.6× currently. The point-light pool was replaced by additive geometry that varies the *ground* instead of the fighter — the same bug relocated. |
 | Ground luminance under a sole vs beside it | **darker by 15–40%** | Currently 26–29% **brighter** on three of four fighters, so they read as hovering over a glowing floor. |
+
+## Anti-gaming amendments (after review 003)
+
+Review 003 found two budget rows passed by moving the defect somewhere the metric
+could not see it. Both are now closed.
+
+### Measure characters on characters
+
+`pct_above_128` was passed by brightening an **empty floor plane**: 79.5% of those
+bright pixels were floor, and only 2.2% of the frame was bright character. That is
+rule 1 violated by the very row meant to enforce it.
+
+> **`pct_above_128` is now measured inside the matte only**, and the target is
+> that **>8% of *character* pixels** exceed L=128. A bright stage cannot pay for
+> a dim cast.
+
+### Measure skin on skin, cloth on cloth
+
+`topbin` and `bands` were passed at whole-character granularity, which averages a
+navy gi with bare skin with a sash. Broken out, the defect reappears: Kai's gi is
+**61% in one 8-L bin**, Mali's shorts 67%, Davi's vest 67%, and every fighter's
+skin is still two clusters with a 48–96 L void between them.
+
+> **Band statistics are now reported per material class** — skin, cloth, wraps —
+> never pooled. Each class carries the same target independently.
+
+Likewise the per-figure `dHue`, `sh/lit` and shadow-pair-distance rows are
+**cloth-confounded and must not be quoted**: Kai's navy gi (hue ~215°) dominates
+his measured shadow hue. Corrected skin-only figures live in review 003.
+
+### One more standing rule
+
+> **A target authored alongside the work it grades is not a target.**
+> `silhouette.py` shipped with `mean IoU < 0.72` and `aspect spread > 18%`,
+> neither of which appears here, and cleared its own IoU bar by 0.004. Any
+> threshold that decides whether work is done belongs in this file, written down
+> before the work starts.
 
 ## Rules
 
