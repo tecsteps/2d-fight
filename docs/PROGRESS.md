@@ -220,3 +220,46 @@ prompt that touches character geometry.
    whole band as a hard-edged blot.
 6. **The weave tiles are coarse** — render them at `tileMetres * 0.55` or they
    read as a chevron blanket at character scale.
+
+---
+
+## Garment framework findings from wave B3
+
+Each was confirmed by an A/B render, not reasoned about. Paste into any prompt
+that builds clothing.
+
+1. **`follow` restricted to a single small bone silently returns zero.**
+   `follow: (b) => b === 'neck'` collapsed Vera's collar onto its own axis inside
+   her throat — invisible, while its rest-space bounding box looked perfect.
+   Trace the whole body and cap with `maxRadius` instead.
+2. **The ink hull floods tight garments with solid-black blots, and it is not
+   the shadow map.** The hull's fragments carry the *lining's* depth; on a
+   near-tangent surface a few pixels of screen-space expansion move that lining
+   past the outer face. The fix is wall thickness, not disabling ink: 3.8mm gave
+   two blots per glute, 14mm one, 20mm none. The lining is never seen, so
+   burying it in the body is free. **Kai's gi has the same artefact at the
+   navel and has not been fixed.**
+3. **Two shells only nest if they bridge identically.** A crop top with an
+   earlier `bridge` than the vest climbed onto the deltoid while the vest was
+   still on the ribs, and its strap erupted through the vest's shoulder.
+   Layering is guaranteed by a shared traced surface, not by offsets alone.
+4. **A full-wrap shell is an annulus.** On a horizontal foot axis its two
+   boundaries are holes facing out of the heel and toe — the boot rendered as an
+   open-toed sandal. Run the axis past both ends and pinch `maxRadius` over the
+   first and last tenth.
+5. **`byAngle` stair-steps on steep profiles.** Its ramp smoothsteps between
+   stops and a smoothstep has zero slope *at* each end, so every authored stop is
+   a flat. Mali's bra neckline climbed 8cm over 50 degrees and rendered as a
+   literal staircase. `smoothByAngle` in `mali.ts` resamples stops every 3
+   degrees first.
+6. **The shoulder is not where the analytic numbers say.** Deltoid, trapezius
+   and neck are blended with a 3cm smooth-min, so a radial ray fired at
+   `shoulderY` finds the deltoid's outer wall, not the top of the shoulder. A
+   strap edge authored from `shoulderY + deltoidR*k` lands as a patch stuck on
+   the side of the arm.
+7. **`bridge` must track the garment's own edge, not a fixed height**, and the
+   transition must land ~3cm *below* that edge — `rFull <= r + bridge` is binary
+   per vertex, so a changeover landing on the finished edge sawtooths.
+8. **A leaning limb axis tips the rays.** Copying a `hip.x * 0.55` axis start put
+   a waistband's top edge into a V at the navel, because the inward ray crosses
+   the belly and drops in y. The segment above the hip must be vertical.
