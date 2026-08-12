@@ -68,7 +68,13 @@ class PartBuilder {
   private idx: number[] = [];
   private morphs: number[][];
 
-  constructor(readonly morphCount: number) {
+  /**
+   * `outward` is a point deep inside the head. Every patch on a face points away
+   * from it, so each grid's winding can be settled by measurement rather than by
+   * the author guessing a `flip` flag per mirrored copy — which is exactly the
+   * bug that left one eyeball back-face culled and every lash invisible.
+   */
+  constructor(readonly morphCount: number, private readonly outward: THREE.Vector3) {
     this.morphs = Array.from({ length: morphCount }, () => []);
   }
 
@@ -76,10 +82,11 @@ class PartBuilder {
    * Appends one quad grid. `variants` must have one grid per morph slot, with
    * identical dimensions; pass the base grid itself for "does not move".
    */
-  grid(base: Grid, variants: Grid[], uv: (r: number, c: number, rows: number, cols: number) => [number, number], flip = false): void {
+  grid(base: Grid, variants: Grid[], uv: (r: number, c: number, rows: number, cols: number) => [number, number]): void {
     const rows = base.length;
     const cols = base[0].length;
     const v0 = this.pos.length / 3;
+    const flip = this.windingFlipped(base);
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const p = base[r][c];
@@ -102,6 +109,26 @@ class PartBuilder {
         else this.idx.push(a, b, d, b, e, d);
       }
     }
+  }
+
+  /** True if (a,b,d) winding would face into the head for this patch. */
+  private windingFlipped(base: Grid): boolean {
+    const rows = base.length;
+    const cols = base[0].length;
+    let acc = 0;
+    for (let r = 0; r + 1 < rows; r++) {
+      for (let c = 0; c + 1 < cols; c++) {
+        const a = base[r][c];
+        const b = base[r][c + 1];
+        const d = base[r + 1][c];
+        _ab.subVectors(b, a);
+        _ad.subVectors(d, a);
+        _cr.crossVectors(_ab, _ad);
+        _out.subVectors(a, this.outward);
+        acc += _cr.dot(_out);
+      }
+    }
+    return acc < 0;
   }
 
   get empty(): boolean {
@@ -139,6 +166,10 @@ function makeGrid(rows: number, cols: number, fn: (r: number, c: number) => THRE
 
 const _p = new THREE.Vector3();
 const _n = new THREE.Vector3();
+const _ab = new THREE.Vector3();
+const _ad = new THREE.Vector3();
+const _cr = new THREE.Vector3();
+const _out = new THREE.Vector3();
 
 /**
  * Where the skin is, along a ray.
@@ -384,7 +415,7 @@ const LID_ROWS = 5;
 const LID_COLS = 17;
 
 /** How far past the lid margin the skin band runs before it tucks under. */
-const LID_SKIRT = 2.6;
+const LID_SKIRT = 1.7;
 
 function buildLids(form: HeadForm, spec: FaceSpec, eyes: Eye[], part: PartBuilder): void {
   const apertures: Aperture[] = [
@@ -407,14 +438,14 @@ function buildLids(form: HeadForm, spec: FaceSpec, eyes: Eye[], part: PartBuilde
           // Proud at the margin, tucking under the skin at the skirt: the lid
           // has to be in front of the globe where it is seen and behind the
           // face where it is not, or its outer edge shows as a cut.
-          const proud = mix(0.0006, -0.006, smoothstep(0.18, 0.75, s));
+          const proud = mix(0.0007, -0.014, smoothstep(0.16, 0.7, s));
           // Squeeze the skirt in laterally so it does not run out past the
           // orbit and reappear on the temple.
           const lat = 1 - 0.18 * s * s;
           return eyePoint(form, eye, t * eye.A * lat, b, proud);
         });
       });
-      part.grid(grids[0], [grids[1], grids[2]], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)], upper === (eye.side > 0));
+      part.grid(grids[0], [grids[1], grids[2]], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)]);
     }
   }
 }
@@ -454,7 +485,7 @@ function buildLashes(form: HeadForm, spec: FaceSpec, eyes: Eye[], part: PartBuil
           return eyePoint(form, eye, t * eye.A * (1 - 0.02 * s), b, proud);
         });
       });
-      part.grid(grids[0], [grids[1], grids[2]], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)], upper === (eye.side > 0));
+      part.grid(grids[0], [grids[1], grids[2]], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)]);
     }
   }
 }
@@ -487,7 +518,6 @@ function buildGlobes(spec: FaceSpec, eyes: Eye[], part: PartBuilder): void {
         // can share one draw call and still both look at the camera.
         return [0.5 + 0.5 * rad * Math.cos(phi), 0.5 + 0.5 * rad * Math.sin(phi)];
       },
-      eye.side < 0,
     );
   }
 }
@@ -527,14 +557,17 @@ function buildBrows(form: HeadForm, spec: FaceSpec, eyes: Eye[], part: PartBuild
         const th = spec.browThick * HL * (0.42 + 0.58 * Math.pow(s, 0.5)) * (1 - 0.3 * smoothstep(0.2, 1, t));
         const rr = (r / 4) * 2 - 1;
         const proud = mix(0.0016, -0.0012, Math.abs(rr));
-        // Inner ends pull toward the midline when angry, which is the furrow.
-        const aIn = spec.browInner * HL - vv.anger * HL * 0.016;
-        const aOut = eye.A * spec.browLen * 1.25;
+        // Both ends are measured *outward from the eye*, so the inner end is a
+        // negative coordinate — it sits between the eye and the midline. Reading
+        // `browInner` as an outward offset instead put the whole brow outside
+        // the eye and produced a 10 mm diagonal splinter.
+        const aIn = (spec.browInner - spec.eyeX) * HL + vv.anger * HL * 0.014;
+        const aOut = eye.A * spec.browLen * 1.15;
         const a = aIn + (aOut - aIn) * ((t + 1) / 2);
         return eyePoint(form, eye, a, b + th * rr, proud);
       });
     });
-    part.grid(grids[0], [grids[1], grids[2]], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)], eye.side > 0);
+    part.grid(grids[0], [grids[1], grids[2]], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)]);
   }
 }
 
@@ -602,7 +635,7 @@ function buildLips(form: HeadForm, spec: FaceSpec, part: PartBuilder): void {
         return mouthPoint(form, spec, t * W, b, proud);
       });
     });
-    part.grid(grids[0], [grids[1], grids[2]], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)], !upper);
+    part.grid(grids[0], [grids[1], grids[2]], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)]);
   }
 }
 
@@ -640,22 +673,32 @@ function buildDarks(form: HeadForm, spec: FaceSpec, part: PartBuilder): void {
   part.grid(grids[0], [grids[1], grids[2]], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)]);
 
   // Nostrils: small dark lenses recessed into the nose's underside.
+  //
+  // Placed by nearest-point projection rather than by a ray march. The nostril
+  // sits on a doubly-curved undercut where neighbouring rays exit the surface
+  // metres apart in parameter space, and a march produced a patch stretched into
+  // a black bar hanging off the philtrum. `project` cannot do that: it always
+  // lands on the nearest skin.
+  const seed = new THREE.Vector3();
+  const nrm = new THREE.Vector3();
+  const tanA = new THREE.Vector3();
+  const tanB = new THREE.Vector3();
   for (const side of [1, -1]) {
-    const g = makeGrid(3, 9, (r, c) => {
-      const th = (c / 8) * Math.PI * 2;
-      const rad = (r / 2) * 1;
-      const a = side * (spec.noseW * HL * 0.62) + Math.cos(th) * rad * HL * 0.021;
-      const yy = Math.sin(th) * rad * HL * 0.011;
-      _p.set(
-        a,
-        form.y0 + (spec.noseY - 0.052) * HL + yy,
-        form.z0 + (spec.noseLen - 0.02) * HL,
-      );
-      _n.set(0, -0.72, -0.7).normalize();
-      const h = skinAlong(form, _p, _n, -0.12 * HL, 0.12 * HL);
-      return new THREE.Vector3().copy(_p).addScaledVector(_n, h - HL * 0.004 * (1 - rad));
+    form.world([side * spec.noseW * 0.6, spec.noseY - 0.052, spec.noseLen - 0.055], seed);
+    form.project(seed);
+    form.normal(seed, nrm);
+    tanA.set(1, 0, 0).addScaledVector(nrm, -nrm.x).normalize();
+    tanB.crossVectors(nrm, tanA).normalize();
+    const g = makeGrid(3, 11, (r, c) => {
+      const th = (c / 10) * Math.PI * 2;
+      const rad = r / 2;
+      return new THREE.Vector3()
+        .copy(seed)
+        .addScaledVector(tanA, Math.cos(th) * rad * HL * 0.026)
+        .addScaledVector(tanB, Math.sin(th) * rad * HL * 0.017)
+        .addScaledVector(nrm, -HL * (0.002 + 0.012 * (1 - rad)));
     });
-    part.grid(g, [g, g], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)], side < 0);
+    part.grid(g, [g, g], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)]);
   }
 }
 
@@ -683,7 +726,7 @@ function buildTeeth(form: HeadForm, spec: FaceSpec, part: PartBuilder): void {
         return mouthPoint(form, spec, t * W, b, -HL * (0.014 + 0.03 * st.open));
       }),
     );
-    part.grid(grids[0], [grids[1], grids[2]], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)], !upper);
+    part.grid(grids[0], [grids[1], grids[2]], (r, c, rows, cols) => [c / (cols - 1), r / (rows - 1)]);
   }
 }
 
@@ -715,7 +758,7 @@ function buildEarDetail(form: HeadForm, spec: FaceSpec, part: PartBuilder): void
       const h = skinAlong(form, _p, _n, -0.2 * HL, 0.16 * HL);
       return new THREE.Vector3().copy(_p).addScaledVector(_n, h + HL * 0.004 * (1 - r / 2));
     });
-    part.grid(g, [g, g], (r, cc, rows, cols) => [cc / (cols - 1), r / (rows - 1)], side < 0);
+    part.grid(g, [g, g], (r, cc, rows, cols) => [cc / (cols - 1), r / (rows - 1)]);
   }
 }
 
@@ -832,8 +875,9 @@ export function buildFace(rig: BuiltCharacter, def: FighterDef = rig.def): THREE
   const teethMat = faceMaterial('wrap', 0xe8e2d8, def, { specular: 0.1 });
 
   const parts: { name: string; part: PartBuilder; mat: THREE.Material; order: number }[] = [];
+  const inside = form.world([0, 0.55, -0.05]);
   const add = (name: string, morphs: number, mat: THREE.Material, order: number, fn: (b: PartBuilder) => void) => {
-    const b = new PartBuilder(morphs);
+    const b = new PartBuilder(morphs, inside);
     fn(b);
     if (!b.empty) parts.push({ name, part: b, mat, order });
   };
