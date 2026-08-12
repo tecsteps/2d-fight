@@ -27,15 +27,18 @@ renderer.background.add(stage.background);
 renderer.world.add(stage.world);
 
 const def = fighterById(id);
-// Built undressed and dressed explicitly, so this harness still exercises
-// `buildCostume` directly even when `buildCharacter` stops calling it.
+// Two paths, both worth being able to shoot. `?wire=1` goes through
+// `buildCharacter`'s own costume hook, which is what the game uses; the default
+// dresses an undressed rig explicitly, so this harness still exercises
+// `buildCostume` if that hook is ever removed.
+const wired = params.get('wire') === '1';
 const t0 = performance.now();
-const rig = buildCharacter(def, { costume: false });
+const rig = buildCharacter(def, { costume: wired });
 const tBody = performance.now() - t0;
 rig.resetPose();
 rig.applyPose(NEUTRAL_STANCE);
 const t1 = performance.now();
-const costume = buildCostume(rig, def);
+const costume = wired ? { meshes: rig.meshes.slice(1), materials: [], triangles: rig.triangles } : buildCostume(rig, def);
 const tCostume = performance.now() - t1;
 renderer.world.add(rig.root);
 

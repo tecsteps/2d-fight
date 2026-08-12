@@ -156,7 +156,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       // there would be a bead pushing through the layer above it.
       fromEdge: undefined,
       toEdge: { fold: 0.015, roll: 0.0065, rings: 4 },
-      drape: { folds: 8, amplitude: 0.0080, along: 3.0, seed: 11 + (side === 'R' ? 5 : 0), sag: 0.005 },
+      drape: { folds: 6, amplitude: 0.0052, along: 1.9, seed: 11 + (side === 'R' ? 5 : 0), sag: 0.005 },
       keepSide: { normal: new THREE.Vector3(sign, 0, 0), d: -0.004, softness: 0.008 },
       tileMetres: tex.garments.pants.tileMetres * WEAVE,
     });
@@ -264,7 +264,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
     bridge: giBridge,
     fromEdge: { fold: 0.018, roll: 0.005, rings: 3 },
     toEdge: { fold: 0.013, roll: 0.0042, rings: 3 },
-    drape: { folds: 7, amplitude: 0.0058, along: 2.6, seed: 3, sag: 0.004 },
+    drape: { folds: 5, amplitude: 0.0030, along: 1.7, seed: 3, sag: 0.004 },
     tileMetres: tex.garments.gi.tileMetres * WEAVE,
   });
   attachGarment(rig, {
@@ -345,6 +345,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
     shadowColor: 0x7c3210,
     tex: tex.garments.obi,
     specular: 0.35,
+    outlineWidth: 0.5,
   }, out);
 
   // -------------------------------------------------------------------- obi --
@@ -396,7 +397,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       follow: TORSO,
       fromEdge: { fold: 0.012, roll: 0.0055, rings: 3 },
       toEdge: w.hemTop ? { fold: 0.012, roll: 0.0055, rings: 3 } : undefined,
-      drape: { folds: 9, amplitude: 0.0022, along: 1.2, seed: 7 },
+      drape: { folds: 7, amplitude: 0.0016, along: 1.0, seed: 7 },
       tileMetres: tex.garments.obi.tileMetres * WEAVE,
     });
     attachGarment(rig, {
@@ -408,6 +409,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       tex: tex.garments.obi,
       specular: 0.32,
       normalScale: 1.1,
+      outlineWidth: 0.5,
     }, out);
   }
 
@@ -509,6 +511,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
     tex: tex.garments.obi,
     bind: 'hips',
     specular: 0.32,
+    outlineWidth: 0.6,
   }, out);
 
   // -------------------------------------------------------------- hand wraps --
@@ -601,6 +604,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       tex: tex.garments.obi,
       bind: `shin${side}` as BoneName,
       specular: 0.3,
+      outlineWidth: 0.6,
     }, out);
   }
 

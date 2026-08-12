@@ -55,7 +55,7 @@ for (const view of VIEWS) {
   });
   page.on('pageerror', (e) => errors.push(String(e)));
 
-  const url = `http://127.0.0.1:5203/tools/costumepreview/index.html?fighter=${FIGHTER}&view=${view}`;
+  const url = `http://127.0.0.1:5203/tools/costumepreview/index.html?fighter=${FIGHTER}&view=${view}${args.wire ? '&wire=1' : ''}`;
   await page.goto(url, { waitUntil: 'networkidle' });
   try {
     await page.waitForFunction(() => window.__fight?.ready === true, null, { timeout: 60_000 });

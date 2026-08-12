@@ -1,28 +1,48 @@
 import * as THREE from 'three';
 import type { NPRMaterial } from './contract';
 import { ToonMaterial, registerNprMaterial, unregisterNprMaterial } from './ToonMaterial';
-import { inkColor } from './ramps';
+import {
+  CreaseInkMaterial,
+  createCreaseInkMesh,
+  type CreaseInkOptions,
+} from './inkPass';
 
 /**
  * Ink linework.
  *
- * Inverted hull: the mesh is drawn a second time with back faces only, expanded
- * along smoothed normals, so what survives the depth test is a shell of dark
- * pixels hugging the silhouette and every interior fold.
+ * Three cooperating passes per surface, because no single technique draws all
+ * three kinds of line a hand-inked fighter needs:
  *
- * Three details separate this from the version everyone writes first:
+ * 1. **Hull** — the mesh redrawn back-faced and expanded along welded normals,
+ *    giving the outer silhouette *and* every place one form occludes another
+ *    (arm over torso, near shin over far shin).
+ * 2. **Relief** — the same hull, coincident, pushed `reliefBias` metres deeper
+ *    along the view ray and blended additively. It therefore survives *only*
+ *    where whatever sits behind the line is at least that far away, i.e. on the
+ *    silhouette against open sky, where it lifts the ink toward a lighter
+ *    weight. Contours where a form occludes another keep the full-dark line.
+ *    That difference is what stops the outline reading as a traced border.
+ * 3. **Crease** (`inkPass.ts`) — a surface overlay that inks from normal and
+ *    depth discontinuity, catching folds the hull cannot see at all and
+ *    reinforcing the interior contour from the occluding form's own side.
  *
- * 1. **Constant screen weight.** The expansion happens in clip space, scaled by
- *    `w`, so a line is the same number of pixels whether the fighter is in a
- *    close-up intro or at full stage distance. Expanding in world space instead
- *    is why so many toon shaders have lines that balloon on zoom-in.
- * 2. **Welded normals.** A hull built on split (hard-edge) normals tears open at
- *    every crease. `computeOutlineNormals` averages normals across coincident
- *    vertices into a separate attribute, leaving the shading normals untouched.
- * 3. **Varying weight.** A uniform-weight outline is the single loudest tell of
- *    programmer art. Real linework is heaviest under the form and on the shadow
- *    side and thins out into the light, which is what `lowerBias`, `shadowBias`
- *    and `litTaper` reproduce.
+ * ## What was wrong before, measured
+ *
+ * - `polygonOffset: true / factor 1` applied a **slope-scaled** depth bias. Depth
+ *   slope explodes on surfaces near-tangent to the view, which is exactly where
+ *   interior contours live, so the shell was pushed metres behind the surface it
+ *   was supposed to draw over and failed the depth test. Vera's inner shin had
+ *   *zero* ink pixels along ~150 px of boundary. Removing the offset restored a
+ *   continuous line, verified in an ink mask before and after.
+ * - Weight was driven by `dot(normal, keyDir)`, so the line thickened to 7–8 px
+ *   on the shadow side and thinned to 3 px on the key side of the same edge.
+ *   A line that changes weight with the light is not a line, it is shading — and
+ *   the wide shadow-side band is what read as a soft dark halo.
+ * - `farWeight: 0.6` tapered the line with distance, which is the opposite of
+ *   constant screen weight.
+ * - The ink colour came from a helper that clamps saturation to 1.0, so pale
+ *   skin got a fully saturated orange line, measured at (54, 5, 0) — *brighter*
+ *   than the backdrop it was drawn against, which reads as a glow, not ink.
  */
 
 export interface OutlineOptions {
@@ -33,44 +53,70 @@ export interface OutlineOptions {
   width?: number;
   color?: THREE.ColorRepresentation;
   /**
-   * Colour the line trends toward where the surface faces the key. Defaults to
-   * a lift of `color`; ink that picks up a little light stops the fighter
-   * looking like a sticker.
+   * Retained for API compatibility. The line is no longer a lighting term, so
+   * this is only used as a fallback if `color` is absent.
    */
   litColor?: THREE.ColorRepresentation;
-  /** Extra weight on downward-facing edges, 0..1.5. */
+  /**
+   * Extra weight on downward-facing edges, 0..1.5. Geometric, not lighting: an
+   * inker weights the underside of a form heavily whichever way the key points.
+   */
   lowerBias?: number;
-  /** Extra weight on edges turned away from the key, 0..1.5. */
+  /**
+   * Deprecated. Weighting the line by the key direction is what made the old
+   * outline appear and disappear; defaults to 0 and is kept only so existing
+   * callers still typecheck.
+   */
   shadowBias?: number;
-  /** How much the line thins where it faces the key, 0..1. */
+  /** Deprecated, defaults to 0. See `shadowBias`. */
   litTaper?: number;
-  /** World-space direction toward the key light. */
+  /** World-space direction toward the key light. Unused unless `shadowBias` > 0. */
   keyDir?: THREE.Vector3;
   /** Hard clamps in pixels so close-ups and long shots both stay legible. */
   minWidth?: number;
   maxWidth?: number;
-  /** View distances over which the line tapers to `farWeight`. */
+  /** Retained; `farWeight` defaults to 1 so screen weight really is constant. */
   near?: number;
   far?: number;
   farWeight?: number;
   /** Screen height the width is authored against. */
   referenceHeight?: number;
   opacity?: number;
+
+  /**
+   * Draw the relief pass that lightens the contour against open space. Set
+   * false for a uniform-weight line (cheaper by one draw call per surface).
+   */
+  relief?: boolean;
+  /**
+   * How far behind the line, in metres, the background has to be before the
+   * relief lift applies. Roughly "gaps narrower than this are occlusion, and
+   * occlusion gets the heavy line".
+   */
+  reliefBias?: number;
+  /** Strength of the lift, as a multiple of the ink colour. */
+  reliefLift?: number;
+
+  /** Draw the crease overlay. See `inkPass.ts`. */
+  crease?: boolean;
+  creaseOptions?: CreaseInkOptions;
 }
 
 const DEFAULTS = {
-  width: 4.2,
-  lowerBias: 0.5,
-  shadowBias: 0.3,
-  litTaper: 0.22,
+  width: 3.4,
+  lowerBias: 0.34,
+  shadowBias: 0,
+  litTaper: 0,
   keyDir: new THREE.Vector3(-5.5, 8.0, 6.0).normalize(),
-  minWidth: 1.7,
-  maxWidth: 12.0,
+  minWidth: 2.0,
+  maxWidth: 5.0,
   near: 6,
   far: 22,
-  farWeight: 0.6,
+  farWeight: 1,
   referenceHeight: 1080,
   opacity: 1,
+  reliefBias: 0.22,
+  reliefLift: 0.9,
 };
 
 const vertexShader = /* glsl */ `
@@ -87,8 +133,7 @@ uniform float uShadowBias;
 uniform float uLitTaper;
 uniform vec2  uDepthRange;
 uniform float uFarWeight;
-
-varying float vLit;
+uniform float uReliefBias;
 
 #include <common>
 #include <batching_pars_vertex>
@@ -124,30 +169,51 @@ void main() {
   #include <logdepthbuf_vertex>
 
   vec3 wn = normalize( mat3( modelMatrix ) * objectNormal );
-  float key = dot( wn, uKeyDir );
-  vLit = saturate( key * 0.5 + 0.5 );
 
-  // Weight the line the way a inker would: heavy underneath, heavy on the side
-  // turned from the light, thinning to a hairline where the form catches it.
+  // Geometric weighting only. The underside of a form gets the heavy line the
+  // way an inker draws it; nothing here reads the lighting, so the line cannot
+  // fade in and out as the key moves.
   float down = saturate( - wn.y );
-  float away = saturate( - key );
-  float weight = uWidth
-    * ( 1.0 + uLowerBias * down + uShadowBias * away )
-    * ( 1.0 - uLitTaper * saturate( key ) );
+  float weight = uWidth * ( 1.0 + uLowerBias * down );
 
-  // Long shots get a lighter line — a full-weight outline on a small figure
-  // crawls and aliases, and reads as noise rather than as drawing.
+  // Both kept at 0 by default — see OutlineOptions. Present so a stage that
+  // really wants a light-biased line can still ask for one.
+  float key = dot( wn, uKeyDir );
+  weight *= 1.0 + uShadowBias * saturate( - key );
+  weight *= 1.0 - uLitTaper * saturate( key );
+
   float depth = - mvPosition.z;
   weight *= mix( 1.0, uFarWeight, smoothstep( uDepthRange.x, uDepthRange.y, depth ) );
 
-  float px = clamp( weight * uPixelScale, uMinPx * uPixelScale, uMaxPx * uPixelScale );
+  float px = clamp( weight, uMinPx, uMaxPx ) * uPixelScale;
 
-  // Expand in clip space, undoing the perspective divide with w, so the line is
-  // a fixed number of pixels at any distance.
-  vec2 dir = transformedNormal.xy;
-  float len = length( dir );
-  dir = len > 1e-5 ? dir / len : vec2( 0.0 );
-  gl_Position.xy += dir * ( px * 2.0 / uResolution ) * gl_Position.w;
+  // Outward direction, in *pixels*.
+  //
+  // Taking the view-space normal's xy directly (the version everyone writes) is
+  // wrong on any non-square viewport: projection scales x and y by different
+  // amounts, so a 3 px line comes out 3 px vertically and 1.7 px horizontally at
+  // 16:9. Push the normal through the projection's diagonal first, then measure
+  // the direction in pixel space.
+  vec2 clipDir = vec2(
+    projectionMatrix[0][0] * transformedNormal.x,
+    projectionMatrix[1][1] * transformedNormal.y
+  );
+  vec2 pxDir = clipDir * uResolution;
+  float len = length( pxDir );
+  pxDir = len > 1e-6 ? pxDir / len : vec2( 0.0 );
+
+  // Undo the perspective divide with w so the offset is a fixed pixel count at
+  // any distance from the camera.
+  gl_Position.xy += pxDir * px * ( 2.0 / uResolution ) * gl_Position.w;
+
+  #ifdef INK_RELIEF
+    // Same pixels, deeper depth. Re-project a point uReliefBias metres further
+    // down the view ray and take only its depth, leaving xy untouched, so this
+    // shell is coincident with the base hull but loses the depth test unless the
+    // geometry behind it is at least that far back.
+    vec4 pushed = projectionMatrix * vec4( mvPosition.xy, mvPosition.z - uReliefBias, 1.0 );
+    gl_Position.z = ( pushed.z / pushed.w ) * gl_Position.w;
+  #endif
 
   #include <fog_vertex>
 
@@ -156,15 +222,13 @@ void main() {
 
 const fragmentShader = /* glsl */ `
 uniform vec3 uColor;
-uniform vec3 uLitColor;
 uniform float uOpacity;
 uniform float uLightingScale;
+uniform float uReliefLift;
 uniform vec3 uFlashColor;
 uniform float uFlash;
 uniform vec3 uSilhouetteColor;
 uniform float uSilhouette;
-
-varying float vLit;
 
 #include <common>
 #include <fog_pars_fragment>
@@ -174,14 +238,28 @@ void main() {
 
   #include <logdepthbuf_fragment>
 
-  gl_FragColor = vec4( mix( uColor, uLitColor, vLit ) * uLightingScale, uOpacity );
+  // Flat. A constant-colour line is the whole point: the previous version mixed
+  // toward a lit colour across the shell, which made the contour brighten on the
+  // key side and vanish where the form caught the light.
+  gl_FragColor = vec4( uColor * uLightingScale, uOpacity );
+
+  #ifdef INK_RELIEF
+    // Additive: this pass only ever lifts the line that is already there.
+    gl_FragColor.rgb *= uReliefLift;
+  #endif
 
   #include <tonemapping_fragment>
 
   // Same ordering as the surface shader: the ink has to reach the exact flash
   // colour, or the linework survives an impact frame as a dark ghost outline.
-  gl_FragColor.rgb = mix( gl_FragColor.rgb, uFlashColor, uFlash );
-  gl_FragColor.rgb = mix( gl_FragColor.rgb, uSilhouetteColor, uSilhouette );
+  #ifdef INK_RELIEF
+    // The lift is additive, so on a flash it has to fall to zero rather than
+    // rise to white, or the silhouette grows a bright fringe.
+    gl_FragColor.rgb *= ( 1.0 - max( uFlash, uSilhouette ) );
+  #else
+    gl_FragColor.rgb = mix( gl_FragColor.rgb, uFlashColor, uFlash );
+    gl_FragColor.rgb = mix( gl_FragColor.rgb, uSilhouetteColor, uSilhouette );
+  #endif
 
   #include <colorspace_fragment>
   #include <fog_fragment>
@@ -190,33 +268,73 @@ void main() {
 `;
 
 const _size = new THREE.Vector2();
+const _hsl = { h: 0, s: 0, l: 0 };
+
+/**
+ * Ink colour for a surface albedo.
+ *
+ * Deliberately *not* `ramps.inkColor`, which pushes saturation to
+ * `s * 1.35 + 0.12` and clamps: any reasonably chromatic skin tone comes back
+ * fully saturated, and pale skin measured (54, 5, 0) — luminance 16 against a
+ * backdrop at luminance 10, so the "ink" was the brighter of the two and read as
+ * a warm glow around the figure.
+ *
+ * The three moves that make a line read as ink rather than as an artefact:
+ * hue nudged toward deep red-violet, chroma present but *bounded*, and a value
+ * low enough that the line is always the darkest thing in its neighbourhood.
+ */
+export function surfaceInk(albedo: THREE.ColorRepresentation): THREE.Color {
+  const c = new THREE.Color(albedo);
+  c.getHSL(_hsl, THREE.SRGBColorSpace);
+
+  // Toward 0.94 turn: the red-violet a brush-and-ink drawing biases to. Short
+  // way round the wheel so a teal never travels through green.
+  let d = 0.94 - _hsl.h;
+  if (d > 0.5) d -= 1;
+  else if (d < -0.5) d += 1;
+  const h = (_hsl.h + d * 0.09 + 1) % 1;
+
+  // Bounded, never clamped. 0.62 is about where a dark colour stops reading as
+  // pigment and starts reading as a saturation bug.
+  const s = Math.min(0.62, _hsl.s * 0.8 + 0.08);
+
+  // Tracks the albedo only weakly, so a pale surface does not get a line pale
+  // enough to disappear against a dark stage.
+  const l = THREE.MathUtils.clamp(0.022 + 0.055 * _hsl.l, 0.02, 0.085);
+
+  return c.setHSL(h, s, l, THREE.SRGBColorSpace);
+}
 
 export class OutlineMaterial extends THREE.ShaderMaterial implements NPRMaterial {
   referenceHeight: number;
+  /** True for the additive relief shell. */
+  readonly relief: boolean;
 
-  constructor(opts: OutlineOptions = {}) {
-    const color = new THREE.Color(opts.color ?? 0x140b12);
-    // Lifted by a scalar, never lerped toward white: ink is so dark in linear
-    // light that even a 15% lerp lands it in mid grey, and a grey outline reads
-    // as a rendering artefact rather than as a drawn line.
-    const lit = opts.litColor ? new THREE.Color(opts.litColor) : color.clone().multiplyScalar(1.35);
+  constructor(opts: OutlineOptions & { isRelief?: boolean } = {}) {
+    const color = new THREE.Color(opts.color ?? opts.litColor ?? 0x1a0f14);
+    const isRelief = opts.isRelief === true;
 
     super({
       fog: true,
       vertexShader,
       fragmentShader,
       side: THREE.BackSide,
-      // Nudge the shell behind the surface it wraps. Without it the hull and the
-      // fill land on the same depth at the silhouette and stipple against
-      // each other.
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 1,
+      defines: isRelief ? { INK_RELIEF: '' } : {},
+      // No polygon offset. The old `factor: 1` was slope-scaled, and depth slope
+      // is unbounded on surfaces near-tangent to the view — precisely where
+      // interior contours are — so the shell was shoved behind the surface it
+      // needed to draw over and every near-tangent interior line dropped out.
+      polygonOffset: false,
+      // The shell never occludes anything: every pixel it wins, it wins on the
+      // strength of the surfaces' own depth. Writing depth here would also make
+      // the relief pass test against the base shell instead of the background.
+      depthWrite: false,
+      transparent: isRelief || (opts.opacity ?? 1) < 1,
+      blending: isRelief ? THREE.AdditiveBlending : THREE.NormalBlending,
       uniforms: THREE.UniformsUtils.merge([
         THREE.UniformsLib.fog,
         {
           uColor: { value: color },
-          uLitColor: { value: lit },
           uOpacity: { value: opts.opacity ?? DEFAULTS.opacity },
           uWidth: { value: opts.width ?? DEFAULTS.width },
           uMinPx: { value: opts.minWidth ?? DEFAULTS.minWidth },
@@ -231,6 +349,8 @@ export class OutlineMaterial extends THREE.ShaderMaterial implements NPRMaterial
             value: new THREE.Vector2(opts.near ?? DEFAULTS.near, opts.far ?? DEFAULTS.far),
           },
           uFarWeight: { value: opts.farWeight ?? DEFAULTS.farWeight },
+          uReliefBias: { value: opts.reliefBias ?? DEFAULTS.reliefBias },
+          uReliefLift: { value: opts.reliefLift ?? DEFAULTS.reliefLift },
           uLightingScale: { value: 1 },
           uFlashColor: { value: new THREE.Color(0xffffff) },
           uFlash: { value: 0 },
@@ -241,8 +361,8 @@ export class OutlineMaterial extends THREE.ShaderMaterial implements NPRMaterial
     });
 
     this.type = 'OutlineMaterial';
+    this.relief = isRelief;
     this.referenceHeight = opts.referenceHeight ?? DEFAULTS.referenceHeight;
-    this.transparent = (opts.opacity ?? 1) < 1;
     registerNprMaterial(this);
   }
 
@@ -251,7 +371,7 @@ export class OutlineMaterial extends THREE.ShaderMaterial implements NPRMaterial
     this.uniforms.uWidth.value = px;
   }
 
-  /** World-space direction toward the key light; drives the weight variation. */
+  /** World-space direction toward the key light. Inert unless `shadowBias` > 0. */
   setKeyDirection(dir: THREE.Vector3): void {
     (this.uniforms.uKeyDir.value as THREE.Vector3).copy(dir).normalize();
   }
@@ -352,56 +472,80 @@ function firstMaterial(mesh: THREE.Mesh): THREE.Material | undefined {
 
 /** Marker so a second `addOutlines` pass does not stack a second shell. */
 const INK_FLAG = 'nprInk';
+/** Companion passes hung off the returned hull, so one removal frees all three. */
+const INK_COMPANIONS = 'nprInkCompanions';
+
+/** Clones `mesh` as a skin-bound or plain mesh sharing its geometry. */
+function shellFor(mesh: THREE.Mesh, material: THREE.Material, suffix: string): THREE.Mesh {
+  let shell: THREE.Mesh;
+  if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
+    const src = mesh as THREE.SkinnedMesh;
+    const skinned = new THREE.SkinnedMesh(src.geometry, material);
+    skinned.bindMode = src.bindMode;
+    skinned.bind(src.skeleton, src.bindMatrix);
+    shell = skinned;
+  } else {
+    shell = new THREE.Mesh(mesh.geometry, material);
+  }
+
+  shell.name = mesh.name ? `${mesh.name}:${suffix}` : suffix;
+  shell.userData[INK_FLAG] = true;
+  // Not a light blocker — casting from it would double every shadow and
+  // receiving would light a flat colour for no reason.
+  shell.castShadow = false;
+  shell.receiveShadow = false;
+  shell.frustumCulled = mesh.frustumCulled;
+  shell.renderOrder = mesh.renderOrder;
+  // Identity transform under the source, so it inherits the world matrix, the
+  // skeleton bind, and — usefully — visibility.
+  shell.matrixAutoUpdate = false;
+  mesh.add(shell);
+  return shell;
+}
 
 /**
- * Builds the ink shell for one mesh and parents it to that mesh.
+ * Builds the ink for one mesh and parents it to that mesh.
  *
- * Geometry is *shared*, not cloned: the hull is the same vertices drawn with a
- * different material, so a skinned fighter costs one extra draw call and zero
- * extra memory, and the ink can never desync from the pose.
+ * Geometry is *shared*, not cloned: every pass is the same vertices drawn with a
+ * different material, so the ink can never desync from the pose and costs no
+ * extra memory.
  *
- * Width and colour default to the source `ToonMaterial`'s per-surface
- * suggestions, so a quilted vest gets a heavier line than a hand wrap without
- * the caller having to know that.
+ * Returns the hull. The relief and crease passes are recorded in the hull's
+ * `userData` so `removeOutlineMesh` frees all of them together.
  */
 export function createOutlineMesh(mesh: THREE.Mesh, opts: OutlineOptions = {}): THREE.Mesh {
   computeOutlineNormals(mesh.geometry);
 
   const src = firstMaterial(mesh);
   const toon = src instanceof ToonMaterial ? src : null;
+  const albedo = (toon?.uniforms.uColor.value as THREE.Color | undefined) ?? null;
 
-  const material = new OutlineMaterial({
-    ...opts,
-    width: opts.width ?? DEFAULTS.width * (toon?.outlineWidth ?? 1),
-    color: opts.color ?? toon?.outlineColor ?? inkColor(0x2a2028),
-  });
+  const width = opts.width ?? DEFAULTS.width * (toon?.outlineWidth ?? 1);
+  // Per-surface albedo first, then the material's own suggestion, then a
+  // neutral. `toon.outlineColor` comes from `ramps.inkColor`, whose saturation
+  // clamp is what produced the neon contour, so it is the fallback rather than
+  // the source.
+  const color =
+    opts.color ?? (albedo ? surfaceInk(albedo) : (toon?.outlineColor ?? new THREE.Color(0x1a0f14)));
 
-  let outline: THREE.Mesh;
-  if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
-    const skinnedSource = mesh as THREE.SkinnedMesh;
-    const skinned = new THREE.SkinnedMesh(skinnedSource.geometry, material);
-    skinned.bindMode = skinnedSource.bindMode;
-    skinned.bind(skinnedSource.skeleton, skinnedSource.bindMatrix);
-    outline = skinned;
-  } else {
-    outline = new THREE.Mesh(mesh.geometry, material);
+  const hull = shellFor(mesh, new OutlineMaterial({ ...opts, width, color }), 'ink');
+  const companions: THREE.Mesh[] = [];
+
+  if (opts.relief !== false) {
+    const relief = shellFor(
+      mesh,
+      new OutlineMaterial({ ...opts, width, color, isRelief: true }),
+      'ink:relief',
+    );
+    companions.push(relief);
   }
 
-  outline.name = mesh.name ? `${mesh.name}:ink` : 'ink';
-  outline.userData[INK_FLAG] = true;
-  // The shell is not a light blocker — casting from it would double every
-  // shadow and receiving would light a flat colour for no reason.
-  outline.castShadow = false;
-  outline.receiveShadow = false;
-  outline.frustumCulled = mesh.frustumCulled;
-  outline.renderOrder = mesh.renderOrder;
+  if (opts.crease !== false) {
+    companions.push(createCreaseInkMesh(mesh, opts.creaseOptions));
+  }
 
-  // Parented to the source with an identity transform, so it inherits the world
-  // matrix, the skeleton bind, and — usefully — visibility.
-  outline.matrixAutoUpdate = false;
-  mesh.add(outline);
-
-  return outline;
+  hull.userData[INK_COMPANIONS] = companions;
+  return hull;
 }
 
 /**
@@ -433,6 +577,15 @@ export function addOutlines(root: THREE.Object3D, opts: OutlineOptions = {}): TH
 
 /** Removes and disposes an ink shell created by `createOutlineMesh`. */
 export function removeOutlineMesh(outline: THREE.Mesh): void {
+  const companions = (outline.userData[INK_COMPANIONS] as THREE.Mesh[] | undefined) ?? [];
+  for (const c of companions) {
+    c.removeFromParent();
+    (c.material as THREE.Material).dispose();
+  }
+  outline.userData[INK_COMPANIONS] = [];
   outline.removeFromParent();
   (outline.material as THREE.Material).dispose();
 }
+
+export { CreaseInkMaterial, createCreaseInkMesh };
+export type { CreaseInkOptions };

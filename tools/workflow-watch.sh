@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
-# Hang detector for a running workflow.
+# Hang and death detector for a running workflow.
 #
-# A workflow that dies loudly is easy — the harness notifies. The dangerous case
-# is an agent that sits forever on a blocking command: the run stays "alive", no
-# notification ever arrives, and the loop's fallback heartbeat is the only thing
-# that eventually notices. This watches the actual evidence of progress (agents
-# appending to their transcripts) and shouts when that stops.
+# A workflow that dies loudly is easy — the harness notifies. Two failure modes
+# are silent:
+#
+#   1. An agent wedged on a command that never returns. The run stays nominally
+#      alive forever and no notification ever arrives.
+#   2. An agent killed by a terminal API error (529 Overloaded, etc.). The
+#      journal still lists it as started-with-no-result, so the workflow waits on
+#      a corpse.
+#
+# The first version of this script checked the NEWEST agent transcript across the
+# whole workflow, which cannot see either case while any sibling is still
+# writing — and that is the normal case, since agents run concurrently. It missed
+# a dead faces agent for 26 minutes. So staleness is now tracked PER AGENT, for
+# agents the journal says started but never returned.
 #
 # Usage: tools/workflow-watch.sh <workflow-dir> <expected-agent-count> [stall-seconds]
 #
-# Emits one line per event on stdout, so it can be driven by Monitor:
-#   PROGRESS  n/N agents done, newest write Ns ago
-#   STALL     no agent has written for Ns  <- act on this
+# Emits one line per event on stdout, for Monitor:
+#   DEAD      <agent> died with an API error   <- restart it
+#   STALL     <agent> silent for Ns            <- investigate, likely wedged
 #   COMPLETE  all N agents returned
 set -uo pipefail
 
@@ -19,10 +28,9 @@ DIR="${1:?workflow transcript dir}"
 EXPECTED="${2:?expected agent count}"
 STALL="${3:-420}"
 
-# Only re-announce a stall every Nth poll; a monitor that spams gets throttled.
-STALL_EVERY=5
+STALL_EVERY=6
 poll=0
-stall_seen=0
+declare -A announced=()
 
 while true; do
   poll=$((poll + 1))
@@ -32,35 +40,48 @@ while true; do
     exit 1
   fi
 
-  done_n=$(grep -c '"type":"result"' "$DIR/journal.jsonl" 2>/dev/null || echo 0)
+  journal="$DIR/journal.jsonl"
+  [[ -f "$journal" ]] || { sleep 20; continue; }
 
-  newest=0
-  for f in "$DIR"/agent-*.jsonl; do
-    [[ -e "$f" ]] || continue
-    m=$(stat -c %Y "$f" 2>/dev/null || echo 0)
-    (( m > newest )) && newest=$m
-  done
-
-  now=$(date +%s)
-  age=$(( newest > 0 ? now - newest : 0 ))
-
+  done_n=$(grep -c '"type":"result"' "$journal" 2>/dev/null || echo 0)
   if (( done_n >= EXPECTED )); then
     echo "COMPLETE  all $EXPECTED agents returned"
     exit 0
   fi
 
-  if (( newest > 0 && age > STALL )); then
-    stall_seen=$((stall_seen + 1))
-    if (( stall_seen == 1 || stall_seen % STALL_EVERY == 0 )); then
-      echo "STALL  no agent transcript written for ${age}s (${done_n}/${EXPECTED} done)"
+  # Agents the journal started but never returned a result for.
+  mapfile -t started < <(grep '"type":"started"' "$journal" 2>/dev/null \
+    | sed -n 's/.*"agentId":"\([^"]*\)".*/\1/p')
+  mapfile -t finished < <(grep '"type":"result"' "$journal" 2>/dev/null \
+    | sed -n 's/.*"agentId":"\([^"]*\)".*/\1/p')
+
+  now=$(date +%s)
+  for a in "${started[@]}"; do
+    for f in "${finished[@]}"; do [[ "$a" == "$f" ]] && continue 2; done
+
+    t="$DIR/agent-$a.jsonl"
+    [[ -f "$t" ]] || continue
+    age=$(( now - $(stat -c %Y "$t") ))
+    (( age <= STALL )) && continue
+
+    # A terminal API error leaves its message as the last thing in the
+    # transcript. Distinguishing death from a wedge changes the fix: a corpse
+    # needs restarting, a wedge needs diagnosing first.
+    if tail -c 4000 "$t" | grep -qE 'API Error: (429|5[0-9][0-9])|Overloaded|rate.?limit'; then
+      kind="DEAD"
+      detail="died with an API error"
+    else
+      kind="STALL"
+      detail="silent, likely wedged on a command"
     fi
-  else
-    # Recovered, or still healthy — reset so the next stall announces promptly.
-    if (( stall_seen > 0 )); then
-      echo "PROGRESS  recovered, newest write ${age}s ago (${done_n}/${EXPECTED} done)"
+
+    key="$kind:$a"
+    n="${announced[$key]:-0}"
+    if (( n == 0 || n % STALL_EVERY == 0 )); then
+      echo "$kind  ${a:0:12} $detail after ${age}s  (${done_n}/${EXPECTED} done)"
     fi
-    stall_seen=0
-  fi
+    announced[$key]=$(( n + 1 ))
+  done
 
   sleep 45
 done
