@@ -26,12 +26,18 @@ const HEIGHT = parseInt(args.height ?? '1080', 10);
 const OUT = args.out ?? 'shots';
 const TAG = args.tag ?? 'frame';
 
+const SCENE = args.scene ?? 'lineup';
+const FIGHTER = args.fighter ?? '';
+const POST = args.post ?? '1';
+
 const server = await createServer({
   server: { port: 5199, strictPort: true, host: '127.0.0.1' },
   logLevel: 'error',
 });
 await server.listen();
-const url = `http://127.0.0.1:5199/`;
+const q = new URLSearchParams({ scene: SCENE, post: POST });
+if (FIGHTER) q.set('fighter', FIGHTER);
+const url = `http://127.0.0.1:5199/?${q}`;
 
 // The container ships a Chromium build that may not match the revision this
 // Playwright wants. Point straight at it rather than downloading — the image is

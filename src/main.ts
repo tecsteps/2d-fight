@@ -1,76 +1,151 @@
 import * as THREE from 'three';
 import { Loop } from './core/Loop';
 import { Renderer, QUALITY_HIGH } from './render/Renderer';
-import { buildBootstrapStage } from './art/stages/bootstrap';
+import { buildBootstrapStage, type Stage } from './art/stages/bootstrap';
+import { buildCharacterPreview } from './art/characters';
+import { nprDebugScene } from './render/npr';
+import { textureDebugSheet } from './art/textures';
+import { PostStack } from './render/post';
+import { ROSTER, fighterById } from './data/roster';
 
 /**
  * Entry point.
  *
- * Wires the fixed-timestep loop to the renderer and stands up whatever the
- * current milestone is. The `__fight` global is the contract the headless
- * screenshot and critic harnesses drive: they need to force a deterministic
- * frame and know when the scene is settled.
+ * Scene selection is by query string (`?scene=lineup`) so the capture harness
+ * can shoot each subsystem in isolation and the critic can score them
+ * separately. A visual regression in the ink outline should not be hidden
+ * behind a stage that happens to look good.
  */
+
+type SceneName = 'lineup' | 'solo' | 'npr' | 'tex';
+
+const params = new URLSearchParams(location.search);
+const sceneName = (params.get('scene') ?? 'lineup') as SceneName;
+const soloId = params.get('fighter') ?? 'kai';
+const usePost = params.get('post') !== '0';
 
 const canvas = document.getElementById('stage') as HTMLCanvasElement;
 const renderer = new Renderer(canvas, QUALITY_HIGH);
 
-const stage = buildBootstrapStage();
-renderer.background.add(stage.background);
-renderer.world.add(stage.world);
-renderer.foreground.add(stage.foreground);
+let stage: Stage | null = null;
+let post: PostStack | null = null;
 
-// Placeholder fighter volumes so the camera framing logic has something real to
-// track until the character pipeline lands.
-const markerGeo = new THREE.CapsuleGeometry(0.32, 1.1, 8, 20);
-const makeMarker = (color: number): THREE.Mesh => {
-  const m = new THREE.Mesh(
-    markerGeo,
-    new THREE.MeshStandardMaterial({ color, roughness: 0.42, metalness: 0.05 }),
-  );
-  m.castShadow = true;
-  m.receiveShadow = true;
-  return m;
-};
+/** Frame the camera on a bounding box, filling the given fraction of height. */
+function frameOn(box: THREE.Box3, fill = 0.82): void {
+  const size = new THREE.Vector3();
+  const centre = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(centre);
+  const cam = renderer.cam.camera;
+  const vFov = (cam.fov * Math.PI) / 180;
+  const dist = size.y / fill / (2 * Math.tan(vFov / 2));
+  // Widen if the group is broader than it is tall.
+  const distH = size.x / fill / (2 * Math.tan(vFov / 2) * cam.aspect);
+  cam.position.set(centre.x, centre.y, Math.max(dist, distH) + size.z);
+  cam.lookAt(centre);
+  cam.updateProjectionMatrix();
+}
 
-const p1 = makeMarker(0xd94f4f);
-const p2 = makeMarker(0x4f7fd9);
-p1.position.set(-2.0, 0.87, 0);
-p2.position.set(2.0, 0.87, 0);
-renderer.world.add(p1, p2);
+function buildScene(): void {
+  switch (sceneName) {
+    case 'npr': {
+      renderer.world.add(nprDebugScene());
+      lightDebugRig();
+      frameOn(new THREE.Box3(new THREE.Vector3(-4, -1, -2), new THREE.Vector3(4, 3, 2)));
+      break;
+    }
 
-renderer.cam.frameFighters(p1.position.x, p1.position.y, p2.position.x, p2.position.y);
-renderer.cam.snap();
+    case 'tex': {
+      renderer.world.add(textureDebugSheet());
+      // Texture sheets are unlit swatches — a flat bright ambient is correct
+      // here, since any directional term would misrepresent the albedo.
+      renderer.world.add(new THREE.AmbientLight(0xffffff, 3.0));
+      const box = new THREE.Box3().setFromObject(renderer.world);
+      frameOn(box, 0.92);
+      break;
+    }
+
+    case 'solo': {
+      stage = buildBootstrapStage();
+      renderer.background.add(stage.background);
+      renderer.world.add(stage.world);
+      const def = fighterById(soloId);
+      const g = buildCharacterPreview(def, { yaw: 0.42 });
+      renderer.world.add(g);
+      frameOn(new THREE.Box3(
+        new THREE.Vector3(-0.6, 0, -0.6),
+        new THREE.Vector3(0.6, def.proportions.height, 0.6),
+      ), 0.9);
+      break;
+    }
+
+    case 'lineup':
+    default: {
+      stage = buildBootstrapStage();
+      renderer.background.add(stage.background);
+      renderer.world.add(stage.world);
+
+      // Spread the roster along the fight line, each turned slightly toward
+      // camera so the three-quarter read — the view a character sheet is
+      // judged on — is what gets captured.
+      const spacing = 1.35;
+      const x0 = -((ROSTER.length - 1) * spacing) / 2;
+      ROSTER.forEach((def, i) => {
+        const g = buildCharacterPreview(def, { yaw: 0.42 });
+        g.position.x = x0 + i * spacing;
+        renderer.world.add(g);
+      });
+      frameOn(new THREE.Box3(
+        new THREE.Vector3(x0 - 0.7, 0, -0.8),
+        new THREE.Vector3(-x0 + 0.7, 1.9, 0.8),
+      ), 0.86);
+      break;
+    }
+  }
+}
+
+/** Neutral three-point rig for scenes that have no stage of their own. */
+function lightDebugRig(): void {
+  const key = new THREE.DirectionalLight(0xffe3c0, 2.4);
+  key.position.set(-4, 6, 5);
+  const fill = new THREE.DirectionalLight(0x7a90d0, 0.5);
+  fill.position.set(5, 2.5, 3);
+  const rim = new THREE.DirectionalLight(0xffa060, 1.7);
+  rim.position.set(1, 3.5, -6);
+  renderer.world.add(key, fill, rim, new THREE.HemisphereLight(0x5a6a93, 0x2a1d16, 0.4));
+}
+
+buildScene();
+
+if (usePost) {
+  post = new PostStack(renderer.renderer, renderer.scene, renderer.cam.camera);
+  const { width, height } = renderer.size;
+  post.setSize(width, height);
+}
 
 const loop = new Loop({
   tick(frame) {
-    // Placeholder idle motion so the frame is not visually dead. The real
-    // simulation replaces this wholesale.
-    const t = frame / 60;
-    p1.position.y = 0.87 + Math.sin(t * 2.1) * 0.018;
-    p2.position.y = 0.87 + Math.sin(t * 2.1 + 1.7) * 0.018;
-
-    renderer.cam.frameFighters(p1.position.x, p1.position.y, p2.position.x, p2.position.y);
-    renderer.cam.tick();
-    stage.tick?.(frame);
+    stage?.tick?.(frame);
   },
-  render(alpha) {
-    renderer.render(loop.frame, alpha);
+  render(alpha, dt) {
+    if (post) {
+      post.render(dt / 1000);
+    } else {
+      renderer.renderer.render(renderer.scene, renderer.cam.camera);
+    }
   },
 });
 
 loop.start();
-
 document.getElementById('boot')?.classList.add('gone');
 
 /** Harness contract — see tools/shots. */
 interface FightHarness {
   loop: Loop;
   renderer: Renderer;
-  /** Jump to an exact sim frame deterministically, then draw it. */
   seek(frame: number): void;
-  /** True once the first frame has been presented. */
   ready: boolean;
+  scene: SceneName;
 }
 
 const harness: FightHarness = {
@@ -79,14 +154,12 @@ const harness: FightHarness = {
   seek(frame: number) {
     loop.stop();
     loop.paused = true;
-    if (frame < loop.frame) {
-      loop.frame = 0;
-      renderer.cam.snap();
-    }
+    if (frame < loop.frame) loop.frame = 0;
     while (loop.frame < frame) loop.hooks.tick(loop.frame++);
-    renderer.render(loop.frame, 0);
+    loop.hooks.render(0, 1000 / 60);
   },
   ready: false,
+  scene: sceneName,
 };
 
 (window as unknown as { __fight: FightHarness }).__fight = harness;

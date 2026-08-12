@@ -39,8 +39,12 @@ export class Renderer {
   quality: RendererQuality;
 
   private canvas: HTMLCanvasElement;
-  private width = 1920;
-  private height = 1080;
+  // Deliberately 0 so the first `resize()` always applies. Seeding these with
+  // the expected viewport makes the constructor's resize no-op, leaving the
+  // canvas on its default 300x150 backing store stretched to full screen by
+  // CSS — which looks exactly like a blurry upscale.
+  private width = 0;
+  private height = 0;
 
   constructor(canvas: HTMLCanvasElement, quality: RendererQuality = QUALITY_HIGH) {
     this.canvas = canvas;
