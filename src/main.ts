@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Loop } from './core/Loop';
 import { Renderer, QUALITY_HIGH } from './render/Renderer';
-import { buildBootstrapStage, type BootstrapStage, type Stage } from './art/stages/bootstrap';
+import { buildBootstrapStage, type BootstrapStage } from './art/stages/bootstrap';
 import { buildCharacterPreview } from './art/characters';
 import { nprDebugScene } from './render/npr';
 import { textureDebugSheet } from './art/textures';
@@ -22,12 +22,34 @@ type SceneName = 'lineup' | 'solo' | 'npr' | 'tex';
 const params = new URLSearchParams(location.search);
 const sceneName = (params.get('scene') ?? 'lineup') as SceneName;
 const soloId = params.get('fighter') ?? 'kai';
-const usePost = params.get('post') !== '0';
+/**
+ * Matte mode: the fighters as flat white on black, no stage, no post.
+ *
+ * This exists for `tools/critic/measure.py`, which otherwise has to guess which
+ * pixels are fighter from brightness alone. That guess held only while the stage
+ * was nearly black, and `docs/FRAME_BUDGET.md` requires it not to be — so as the
+ * frame moved into its budgeted value band the tool's per-figure statistics
+ * quietly started measuring the floor. Every photometric alternative tried
+ * either swallowed the near-black ink and destroyed the hue numbers, or moved
+ * the historical values so reviews 001 and 002 stopped being comparable to
+ * anything. A matte is the only answer that is exact and stays exact on any
+ * stage.
+ *
+ * Capture the pair and pass both:
+ *
+ * ```
+ * node tools/shots/capture.mjs --scene lineup --frames 0 --tag look
+ * node tools/shots/capture.mjs --scene lineup --frames 0 --tag matte --matte 1
+ * python3 tools/critic/measure.py shots/look-0000.png --matte shots/matte-0000.png
+ * ```
+ */
+const matte = params.get('matte') === '1';
+const usePost = params.get('post') !== '0' && !matte;
 
 const canvas = document.getElementById('stage') as HTMLCanvasElement;
 const renderer = new Renderer(canvas, QUALITY_HIGH);
 
-let stage: Stage | null = null;
+let stage: BootstrapStage | null = null;
 let post: PostStack | null = null;
 
 /** Frame the camera on a bounding box, filling the given fraction of height. */
@@ -72,6 +94,7 @@ function buildScene(): void {
       const def = fighterById(soloId);
       const g = buildCharacterPreview(def, { yaw: 0.42 });
       renderer.world.add(g);
+      stage.setContactPoints(footContacts(g.position.x));
       frameOn(new THREE.Box3(
         new THREE.Vector3(-0.6, 0, -0.6),
         new THREE.Vector3(0.6, def.proportions.height, 0.6),
@@ -95,12 +118,9 @@ function buildScene(): void {
         const g = buildCharacterPreview(def, { yaw: 0.42 });
         g.position.x = x0 + i * spacing;
         renderer.world.add(g);
-        contacts.push(
-          { x: g.position.x - 0.064, z: -0.028 },
-          { x: g.position.x + 0.064, z: 0.028 },
-        );
+        contacts.push(...footContacts(g.position.x));
       });
-      (stage as BootstrapStage).setContactPoints(contacts);
+      stage.setContactPoints(contacts);
       frameOn(new THREE.Box3(
         new THREE.Vector3(x0 - 0.7, 0, -0.8),
         new THREE.Vector3(-x0 + 0.7, 1.9, 0.8),
@@ -108,6 +128,50 @@ function buildScene(): void {
       break;
     }
   }
+}
+
+/**
+ * The two soles of a fighter standing at `x`, for `stage.setContactPoints`.
+ *
+ * Hard-coded to the preview's A-pose stance and its 0.42 rad yaw, which is all
+ * a static lineup needs. Gameplay replaces this with the ankle joints read off
+ * the posed skeleton and a per-foot `strength` from the grounded flag — the
+ * point of the stage API is that it takes world positions and knows nothing
+ * about how they were obtained.
+ */
+function footContacts(x: number): { x: number; z: number }[] {
+  const half = 0.064;
+  const yawZ = 0.028;
+  return [
+    { x: x - half, z: -yawZ },
+    { x: x + half, z: yawZ },
+  ];
+}
+
+/**
+ * Strips the frame to a fighter matte: flat white bodies on black.
+ *
+ * The ink shells are hidden rather than whitened. They are separate meshes that
+ * sit a few pixels *outside* the body, so leaving them in would grow the matte
+ * by the outline's width — and the pixels it would add are the darkest in the
+ * frame, which is exactly the wrong thing to feed into a statistic about a
+ * fighter's shadow value.
+ */
+function applyMatte(): void {
+  const white = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  renderer.background.clear();
+  renderer.foreground.clear();
+  renderer.scene.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    // Key owned by `render/npr/outline.ts`, which tags every ink shell it makes.
+    if (mesh.userData.nprInk) {
+      mesh.visible = false;
+      return;
+    }
+    mesh.material = white;
+  });
+  renderer.renderer.setClearColor(0x000000, 1);
 }
 
 /** Neutral three-point rig for scenes that have no stage of their own. */
@@ -122,6 +186,16 @@ function lightDebugRig(): void {
 }
 
 buildScene();
+if (matte) {
+  // After `buildScene`, so it catches the stage as well as the fighters: the
+  // stage's own meshes are removed from the layers rather than whitened.
+  const built = stage as BootstrapStage | null;
+  if (built) {
+    renderer.world.remove(built.world);
+    renderer.background.remove(built.background);
+  }
+  applyMatte();
+}
 
 if (usePost) {
   post = new PostStack(renderer.renderer, renderer.scene, renderer.cam.camera);

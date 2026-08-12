@@ -854,6 +854,11 @@ export function buildFace(rig: BuiltCharacter, def: FighterDef = rig.def): THREE
   const { form } = refineHead(rig, spec);
   const HL = form.HL;
 
+  // Published for anything that has to sit *on* the skull. Hair is the reason:
+  // fitted to the body mesh's old ellipsoid it hangs in front of the sculpted
+  // forehead, and every fighter's fringe covers their own eyes.
+  rig.root.userData.headForm = form;
+
   const root = new THREE.Group();
   root.name = `${def.id}:face`;
   // The head bone's rest transform is a pure translation to the head joint, so
@@ -984,6 +989,16 @@ export function buildFace(rig: BuiltCharacter, def: FighterDef = rig.def): THREE
 /** The controls for a fighter whose face has been built, if it has one. */
 export function faceControls(rig: BuiltCharacter): FaceControls | undefined {
   return rig.root.userData.face as FaceControls | undefined;
+}
+
+/**
+ * The sculpted skull for this rig, if the face was built.
+ *
+ * Null when a rig is built with `face: false` (anatomy checks), in which case
+ * callers fall back to the ellipsoid approximation.
+ */
+export function headFormOf(rig: BuiltCharacter): HeadForm | null {
+  return (rig.root.userData.headForm as HeadForm | undefined) ?? null;
 }
 
 export { faceSpec } from './head';

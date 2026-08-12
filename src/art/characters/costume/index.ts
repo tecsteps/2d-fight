@@ -2,6 +2,7 @@ import { addOutlines } from '../../../render/npr';
 import type { FighterDef } from '../../../data/roster';
 import type { BuiltCharacter } from '../rig';
 import { emptyCostume, type BuiltCostume } from './garment';
+import { buildDaviCostume } from './davi';
 import { buildKaiCostume } from './kai';
 import { buildMaliCostume } from './mali';
 import { buildVeraCostume } from './vera';
@@ -80,6 +81,9 @@ export function buildCostume(rig: BuiltCharacter, def: FighterDef = rig.def): Bu
   switch (def.id) {
     case 'kai':
       costume = buildKaiCostume(rig, def);
+      break;
+    case 'davi':
+      costume = buildDaviCostume(rig, def);
       break;
     case 'mali':
       costume = buildMaliCostume(rig, def);

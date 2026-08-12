@@ -79,13 +79,31 @@ def hsv_of(mean_rgb) -> tuple:
     return h * 360.0, s * 100.0, v * 100.0
 
 
-def analyse(path: Path) -> dict:
+def load_matte(path: Path, shape) -> np.ndarray:
+    """Boolean fighter mask from a matte capture (`--scene lineup --matte 1`).
+
+    The matte is flat-white bodies on black with the ink shells hidden, so any
+    threshold in the middle of the range gives the same answer; 128 is chosen
+    only because it is the middle. Anti-aliased edge pixels land on the fighter
+    side at exactly the coverage where they are more fighter than background,
+    which is the right call for every statistic below.
+    """
+    m = luminance(np.asarray(Image.open(path).convert('RGB'))) > 128
+    if m.shape != shape:
+        raise SystemExit(
+            f'matte is {m.shape[1]}x{m.shape[0]} but the frame is {shape[1]}x{shape[0]}; '
+            f'capture both at the same size'
+        )
+    return m
+
+
+def analyse(path: Path, matte: np.ndarray | None = None) -> dict:
     im = Image.open(path).convert('RGB')
     rgb = np.asarray(im)
     lum = luminance(rgb)
     h, w = lum.shape
 
-    out: dict = {'file': str(path), 'size': [w, h]}
+    out: dict = {'file': str(path), 'size': [w, h], 'matte': matte is not None}
 
     # --- global value structure ---------------------------------------------
     out['global'] = {
@@ -97,32 +115,29 @@ def analyse(path: Path) -> dict:
     }
 
     # --- per figure ----------------------------------------------------------
-    spans = find_figures(lum)
+    spans = matte_spans(matte) if matte is not None else find_figures(lum)
     figs = []
     for i, (x0, x1) in enumerate(spans):
         col = rgb[:, x0:x1]
         cl = lum[:, x0:x1]
-        # Figure pixels: brighter than the local background median. Crude, but
-        # consistent across runs, which is what matters for tracking a delta.
-        #
-        # KNOWN BAD on a stage that meets the global budget, and deliberately
-        # left alone rather than quietly redefined mid-wave. `median(cl)` over a
-        # full-height column strip is a stand-in for "the background", and that
-        # only holds while backdrop and floor are the same value — i.e. while the
-        # stage is nearly black. On a stage whose floor sits at its budgeted
-        # L≈110-150 the strip median lands between sky and floor, the near floor
-        # passes this test, and every per-figure number below is then part
-        # ground: shadow/lit ratios climb toward 0.9 on a roster whose ratio has
-        # not moved. Nothing in the loop below can be trusted on such a frame.
-        #
-        # The fix is a real matte — one extra capture with the fighters rendered
-        # to a mask — not another threshold. Every purely photometric rule tried
-        # here (row-median reference, |deviation| from the row median, clipping
-        # to the figure's rows) either admits the near-black ink and destroys the
-        # hue statistics, or shifts the historical numbers so reviews 001/002 can
-        # no longer be compared against.
-        bg = np.median(cl)
-        m = cl > bg * 1.25
+        if matte is not None:
+            m = matte[:, x0:x1]
+        else:
+            # Fallback when no matte was captured: figure pixels are the ones
+            # brighter than the column strip's median.
+            #
+            # KNOWN BAD on a stage that meets the global budget, which is why
+            # `--matte` exists. `median(cl)` over a full-height strip is a
+            # stand-in for "the background", and that only holds while backdrop
+            # and floor are the same value — i.e. while the stage is nearly
+            # black. On a stage whose floor sits at its budgeted L≈110-150 the
+            # strip median lands between sky and floor, the near floor passes
+            # this test, and every per-figure number below is then part ground:
+            # shadow/lit ratios climb toward 0.9 on a roster whose ratio has not
+            # moved. Kept, unchanged, so reviews 001 and 002 stay comparable —
+            # not because it is right.
+            bg = np.median(cl)
+            m = cl > bg * 1.25
         if m.sum() < 500:
             continue
         px = col[m]
@@ -197,6 +212,24 @@ def analyse(path: Path) -> dict:
     return out
 
 
+def matte_spans(matte: np.ndarray, min_w: int = 40):
+    """Figure column-bands straight off the matte. Exact, and stage-independent."""
+    cols = matte.any(axis=0)
+    spans = []
+    x = 0
+    w = len(cols)
+    while x < w:
+        if cols[x]:
+            x0 = x
+            while x < w and cols[x]:
+                x += 1
+            if x - x0 >= min_w:
+                spans.append((int(x0), int(x)))
+        else:
+            x += 1
+    return spans
+
+
 BUDGET = [
     ('median_luma', 'global.median_luma', 48, 72),
     ('pct_below_16', 'global.pct_below_16', None, 8),
@@ -215,16 +248,20 @@ def dig(d, path):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('image')
+    ap.add_argument('--matte', help='matte capture (--scene lineup --matte 1) for exact figure masks')
     ap.add_argument('--json', action='store_true')
     args = ap.parse_args()
 
-    r = analyse(Path(args.image))
+    frame = Path(args.image)
+    shape = luminance(np.asarray(Image.open(frame).convert('RGB'))).shape
+    r = analyse(frame, load_matte(Path(args.matte), shape) if args.matte else None)
     if args.json:
         print(json.dumps(r, indent=2))
         return
 
     g = r['global']
-    print(f"\n{r['file']}  {r['size'][0]}x{r['size'][1]}")
+    print(f"\n{r['file']}  {r['size'][0]}x{r['size'][1]}"
+          f"{'  [matte]' if r['matte'] else '  [no matte -- per-figure rows are unreliable on a mid-value stage]'}")
     print('\n-- global value structure ' + '-' * 42)
     for name, path, lo, hi in BUDGET:
         v = dig(r, path)

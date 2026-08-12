@@ -20,6 +20,7 @@ import {
 } from './body';
 import { buildCostume } from './costume';
 import { buildHair } from './hair';
+import { buildFace } from './face';
 
 /**
  * Assembles a fighter: skeleton, skinned body, NPR materials, ink.
@@ -36,6 +37,8 @@ export interface BuildCharacterOptions extends BodyMeshOptions {
   costume?: boolean;
   /** Give the fighter hair. Off for anatomy checks and for hair authoring itself. */
   hair?: boolean;
+  /** Sculpt the head and build the face. Off for anatomy checks. */
+  face?: boolean;
 }
 
 export interface BuiltCharacter extends CharacterRig {
@@ -136,7 +139,15 @@ export function buildCharacter(def: FighterDef, opts: BuildCharacterOptions = {}
     },
   };
 
+  // Faces go first, and before the ink pass. `buildFace` re-sculpts the body
+  // mesh's own head vertices rather than laying a shell over them — a shell
+  // cannot change the silhouette, and the ink hull would draw a contour across
+  // anything protruding past the old profile. The hull caches a welded normal,
+  // so it has to be built against the final head.
+  if (opts.face !== false) buildFace(rig, def);
+
   if (opts.outlines !== false) rig.outlines = addOutlines(root);
+
   // After the ink pass, not before: `buildCostume` and `buildHair` ink their own
   // meshes, and `addOutlines` skips anything already inked. Running them after
   // means each garment and each loc gets its own line and the body is not

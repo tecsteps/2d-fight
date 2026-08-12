@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { headFormOf } from './face';
+import type { HeadForm } from './head';
 import type { RigMetrics } from '../../anim/Skeleton';
 import type { FighterDef } from '../../data/roster';
 import { createToonMaterial } from '../../render/npr/ToonMaterial';
@@ -167,18 +169,35 @@ class Buf {
  * deliberate hair's breadth larger than the body's cranium, because the female
  * pass narrows the skull a further 3% and hair must never end up *inside* it.
  */
+/**
+ * Where the scalp is.
+ *
+ * Originally an ellipsoid matching the body mesh's old head. Once `head.ts`
+ * started sculpting a real skull that ellipsoid became wrong in the worst
+ * possible place: its forehead sat at +0.427 head-lengths, as far forward as
+ * the nose tip, so hair fitted to it hung ~30mm in front of the scalp and every
+ * fighter's fringe covered their own eyes.
+ *
+ * So when a `HeadForm` is available this delegates to it, and the ellipsoid
+ * survives only as the fallback for callers that have no sculpt (anatomy checks
+ * built with `face: false`). Both use the same angular convention — θ = 0 faces
+ * +Z, +θ turns toward +X — which is why the swap is a delegation and not a
+ * rewrite of every lock, braid and band that queries it.
+ */
 class Skull {
   readonly c = new THREE.Vector3();
   readonly r = new THREE.Vector3();
   /** Vertical distance from the head joint (chin height) to the crown. */
   readonly headLen: number;
   readonly R: number;
+  private readonly form: HeadForm | null;
 
-  constructor(m: RigMetrics, headJoint: THREE.Vector3) {
+  constructor(m: RigMetrics, headJoint: THREE.Vector3, form: HeadForm | null = null) {
     this.headLen = m.headLen;
     this.R = m.skullR;
     this.c.set(0, headJoint.y + 0.66 * m.headLen, headJoint.z + 0.02 * m.headLen);
     this.r.set(m.skullR, m.skullR * 1.03, m.skullR * 1.22);
+    this.form = form;
   }
 
   /** Unit direction from the cranium centre. θ = 0 faces +Z, +θ turns to +X. */
@@ -189,6 +208,7 @@ class Skull {
 
   /** Surface point in direction (θ, φ), pushed `lift` metres along the normal. */
   at(theta: number, phi: number, lift = 0, out = new THREE.Vector3()): THREE.Vector3 {
+    if (this.form) return this.form.scalpPoint(theta, phi, lift, out);
     const d = Skull.dir(theta, phi, out);
     const k =
       1 /
@@ -1401,7 +1421,7 @@ export function buildHair(rig: BuiltCharacter, def: FighterDef = rig.def): THREE
   const ctx: Ctx = {
     def,
     m,
-    skull: new Skull(m, rig.joints.head),
+    skull: new Skull(m, rig.joints.head, headFormOf(rig)),
     head,
     headPos: rig.joints.head.clone(),
     n: noise([...def.id].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) >>> 0, 17)),
