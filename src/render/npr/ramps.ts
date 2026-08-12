@@ -73,6 +73,18 @@ export interface RampSpec {
    * go without brightening past the albedo.
    */
   litLevel?: number;
+  /**
+   * Where the first form edge sits between the terminator and `shoulder`, as a
+   * fraction of that span.
+   *
+   * It was hard-coded at 0.45, and review 003 measured what that costs: on a
+   * limb lit by a 44°-elevation key the ramp coordinate only reaches ~0.71, so
+   * edges packed into the lower half of the lit span leave the top band holding
+   * everything from there to the highlight — 46% of Kai's bare skin in one 8-L
+   * bin. The edges have to be placed where the *coordinate* actually is, not
+   * where the interval's midpoint is.
+   */
+  formStart?: number;
 }
 
 interface ResolvedRamp extends Required<RampSpec> {}
@@ -92,6 +104,7 @@ const DEFAULTS: Omit<ResolvedRamp, 'bands' | 'sharpness'> = {
   shadowLevel: 0.14,
   deepLevel: 0,
   litLevel: 0.88,
+  formStart: 0.45,
 };
 
 const cache = new Map<string, THREE.DataTexture>();
@@ -108,6 +121,7 @@ function resolve(spec: RampSpec): ResolvedRamp {
     shadowLevel: THREE.MathUtils.clamp(spec.shadowLevel ?? DEFAULTS.shadowLevel, 0, 1),
     deepLevel: THREE.MathUtils.clamp(spec.deepLevel ?? DEFAULTS.deepLevel, 0, 1),
     litLevel: THREE.MathUtils.clamp(spec.litLevel ?? DEFAULTS.litLevel, 0, 1),
+    formStart: THREE.MathUtils.clamp(spec.formStart ?? DEFAULTS.formStart, 0.05, 0.95),
   };
 }
 
@@ -169,7 +183,7 @@ function bandLayout(r: ResolvedRamp): { edges: number[]; values: number[] } {
   const values = [r.deepLevel, r.shadowLevel, r.litLevel];
   // Form bands start well clear of the terminator so the two never read as a
   // pair of edges; the last one lands exactly on `shoulder`.
-  const first = term + (r.shoulder - term) * 0.45;
+  const first = term + (r.shoulder - term) * r.formStart;
   for (let k = 1; k <= upper; k++) {
     const t = upper === 1 ? 1 : (k - 1) / (upper - 1);
     edges.push(THREE.MathUtils.lerp(first, r.shoulder, t));
@@ -195,7 +209,7 @@ function bandLayout(r: ResolvedRamp): { edges: number[]; values: number[] } {
  */
 export function bandRamp(spec: RampSpec): THREE.DataTexture {
   const r = resolve(spec);
-  const key = `${r.bands}|${r.sharpness.toFixed(3)}|${r.toe.toFixed(3)}|${r.shoulder.toFixed(3)}|${r.terminatorWidth.toFixed(3)}|${r.gamma.toFixed(3)}|${r.core.toFixed(3)}|${r.shadowLevel.toFixed(3)}|${r.deepLevel.toFixed(3)}|${r.litLevel.toFixed(3)}`;
+  const key = `${r.bands}|${r.sharpness.toFixed(3)}|${r.toe.toFixed(3)}|${r.shoulder.toFixed(3)}|${r.terminatorWidth.toFixed(3)}|${r.gamma.toFixed(3)}|${r.core.toFixed(3)}|${r.shadowLevel.toFixed(3)}|${r.deepLevel.toFixed(3)}|${r.litLevel.toFixed(3)}|${r.formStart.toFixed(3)}`;
   const hit = cache.get(key);
   if (hit) return hit;
 
@@ -324,20 +338,78 @@ export function warmth(color: THREE.ColorRepresentation): number {
   return (200 * (fy - fz)) / Math.max(L, 1e-3);
 }
 
+// --- HSV -------------------------------------------------------------------
+//
+// The shade transform runs in HSV rather than HSL for one reason: **chroma has
+// to be a quantity this code can see**. In HSV the distance between the peak and
+// trough channel is exactly `S · V`, so "drop the value 30% and the chroma 35%"
+// is two numbers multiplied. In HSL it is neither — holding S while lowering L
+// past 0.5 makes a pale surface *gain* chroma, which is how Vera's shadow came
+// out more saturated than her lit skin while the tuning constants said otherwise.
+
+interface HSV {
+  h: number;
+  s: number;
+  v: number;
+}
+
+const _hsvA: HSV = { h: 0, s: 0, v: 0 };
+const _hsvB: HSV = { h: 0, s: 0, v: 0 };
+
+function getHSV(c: THREE.Color, out: HSV): HSV {
+  c.getRGB(_srgb, THREE.SRGBColorSpace);
+  const { r, g, b } = _srgb;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  if (d > 1e-6) {
+    if (max === r) h = ((g - b) / d + 6) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h /= 6;
+  }
+  out.h = h;
+  out.s = max > 1e-6 ? d / max : 0;
+  out.v = max;
+  return out;
+}
+
+function setHSV(c: THREE.Color, h: number, s: number, v: number): THREE.Color {
+  const hh = ((h % 1) + 1) % 1;
+  const ss = THREE.MathUtils.clamp(s, 0, 1);
+  const vv = THREE.MathUtils.clamp(v, 0, 1);
+  const i = Math.floor(hh * 6);
+  const f = hh * 6 - i;
+  const p = vv * (1 - ss);
+  const q = vv * (1 - f * ss);
+  const t = vv * (1 - (1 - f) * ss);
+  const table: [number, number, number][] = [
+    [vv, t, p],
+    [q, vv, p],
+    [p, vv, t],
+    [p, q, vv],
+    [t, p, vv],
+    [vv, p, q],
+  ];
+  const [r, g, b] = table[i % 6];
+  return c.setRGB(r, g, b, THREE.SRGBColorSpace);
+}
+
 /**
  * Tints `target` toward `tint`'s hue and chroma while holding `target`'s own
- * lightness.
+ * HSV value.
  *
  * Mixing straight toward a light sky colour would lift the shadow's value at the
  * same time as cooling it, and then the value-band control downstream has to
  * undo half of what this did. Separating the two moves means each one is tuned
  * against exactly one measurement.
  */
-function tintAtLightness(target: THREE.Color, tint: THREE.Color, amount: number): void {
+function tintAtValue(target: THREE.Color, tint: THREE.Color, amount: number): void {
   if (amount <= 0) return;
-  target.getHSL(_hsl, THREE.SRGBColorSpace);
-  tint.getHSL(_hslB, THREE.SRGBColorSpace);
-  const t = tint.clone().setHSL(_hslB.h, _hslB.s, _hsl.l, THREE.SRGBColorSpace);
+  getHSV(target, _hsvA);
+  getHSV(tint, _hsvB);
+  const t = setHSV(tint.clone(), _hsvB.h, _hsvB.s, _hsvA.v);
   // Mixed in sRGB, because "half way between these two swatches" is a statement
   // about the space a painter picks colours in, not about linear light.
   target.getRGB(_srgb, THREE.SRGBColorSpace);
@@ -352,40 +424,53 @@ function tintAtLightness(target: THREE.Color, tint: THREE.Color, amount: number)
 }
 
 /**
- * Rotates a hue toward the cool anchor the way a painter does — **never through
+ * Rotates a hue by `deg` degrees the way a painter does — **never through
  * green**.
  *
  * Taking the geometrically shortest path on the wheel sends orange and cream
  * shadows through yellow-green, which is the single most reliable way to make
  * skin look ill and white cloth look mouldy. Warm hues therefore travel the
- * long way round, through red and violet; only hues already past green take the
- * short route.
+ * long way round, through red and violet; hues already past green take the
+ * short route, which for them is the descending one anyway.
+ *
+ * The rotation is an **absolute angle**, not a fraction of the distance to a
+ * fixed anchor. That change is review 003's finding #3: a fractional pull toward
+ * one anchor is a contraction, so four skins whose lit hues span 8° land inside
+ * 6° of each other no matter what the fraction is. Every fighter's skin shadow
+ * measured in H333–355, a 22° window, for exactly that reason.
  */
-function towardCool(h: number, shift: number): number {
+function rotateShade(h: number, deg: number): number {
   const viaViolet = h <= 0.25 || h >= COOL_ANCHOR;
-  let d: number;
-  if (viaViolet) {
-    // Descending: yellow → orange → red → magenta → violet → blue.
-    d = -((h - COOL_ANCHOR + 1) % 1);
-  } else {
-    d = COOL_ANCHOR - h;
-  }
-  return (h + d * shift + 1) % 1;
+  const d = viaViolet ? -deg / 360 : Math.min(deg / 360, Math.max(0, COOL_ANCHOR - h));
+  return (h + d + 1) % 1;
 }
 
 export interface ShadowTintOptions {
-  /** How far to drag the hue toward blue, 0..1. */
-  shift?: number;
   /**
-   * Multiplier on saturation. Below 1 — see the note in `coolShadow` about why
-   * the old chroma *gain* is what prevented any temperature separation.
+   * Hue rotation toward violet, in **degrees**.
+   *
+   * Chroma is given up in proportion to it — see `chromaFall`. That coupling is
+   * the whole point of this function: review 003 measured the shadow hue rotated
+   * 45–55° at essentially unchanged chroma and named the result exactly right —
+   * "a shadow that keeps the light side's saturation and moves 50° in hue is not
+   * a shadow, it is a second colour", which is why 14–36% of every fighter's
+   * bare skin read as bruising.
    */
-  satGain?: number;
+  rotate?: number;
+  /**
+   * Fraction of the surface's chroma given up per 60° of rotation.
+   *
+   * Not an independent dial. A shadow is the same surface under less light, so
+   * the further its hue travels the less of the original colour can still be
+   * present; letting these two be tuned separately is how the last pass shipped
+   * a 50° rotation at 110% chroma.
+   */
+  chromaFall?: number;
   /** Chroma added to near-neutral colours so a grey shadow still reads cool. */
   satLift?: number;
-  /** Multiplier on lightness for a mid-value base. */
+  /** Multiplier on HSV value. */
   value?: number;
-  /** How much sky colour is mixed into the shadow, at constant lightness. */
+  /** How much sky colour is mixed into the shadow, at constant HSV value. */
   skylight?: number;
   /** The sky the shadow sits in. Defaults to `DEFAULT_SKY`. */
   skyColor?: THREE.ColorRepresentation;
@@ -395,13 +480,46 @@ export interface ShadowTintOptions {
    * four different colours read as four fighters even before the costumes land.
    */
   accent?: THREE.ColorRepresentation | null;
-  /** How much of the accent to pull in, at constant lightness. */
+  /** How much of the accent to pull in, at constant HSV value. */
   accentAmount?: number;
   /**
    * Minimum drop in `warmth` the result must achieve against `base`. Enforced by
    * measurement, not by trusting the tuning above.
    */
   minCool?: number;
+}
+
+/**
+ * How far this surface's shadow should rotate, in degrees.
+ *
+ * Review 003's finding #3 in one function: the rotation used to be a global
+ * constant, so the whole roster's skin shadow landed inside a 22° window and
+ * "the whole roster blotches the same colour". Two per-character terms fix that,
+ * and neither is arbitrary:
+ *
+ * - **The surface's own value.** A pale surface can give up 25° and still be
+ *   recognisably itself; deep brown skin taken the same distance stops being
+ *   that person's skin and becomes a bruise. Davi rotates least, Vera most.
+ * - **The fighter's accent temperature.** A cool accent (Kai's and Davi's blue
+ *   `energy`) is a fighter whose shadows sit in reflected blue and can travel
+ *   further round; a warm one (Mali's red, Vera's orange) holds the shadow back
+ *   toward the light side's family.
+ *
+ * `base` is the whole rotation budget for this surface class; the return value
+ * is clamped so no palette can push a shadow out of the −25..−65° band the frame
+ * budget requires of the aggregate.
+ */
+export function shadowRotation(
+  surface: THREE.ColorRepresentation,
+  accent: THREE.ColorRepresentation | null,
+  base: number,
+  range: [number, number] = [0.6, 1.5],
+): number {
+  const c = surface instanceof THREE.Color ? surface : new THREE.Color(surface);
+  getHSV(c, _hsvA);
+  const w = accent == null ? 0 : THREE.MathUtils.clamp(warmth(accent), -1, 1);
+  const k = (0.62 + 0.5 * _hsvA.v) * (1 - 0.3 * w);
+  return base * THREE.MathUtils.clamp(k, range[0], range[1]);
 }
 
 /**
