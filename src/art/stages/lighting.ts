@@ -1,5 +1,10 @@
 import * as THREE from 'three';
-import { calibrateNpr, setNprRimDirection, setNprSaturation } from '../../render/npr/ToonMaterial';
+import {
+  NPR_TUNING,
+  nprMaterials,
+  setNprRimDirection,
+  setNprSaturation,
+} from '../../render/npr/ToonMaterial';
 
 /**
  * The fight-plane light rig.
