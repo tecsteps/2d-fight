@@ -90,14 +90,14 @@ function buildScene(): void {
       // judged on — is what gets captured.
       const spacing = 1.35;
       const x0 = -((ROSTER.length - 1) * spacing) / 2;
-      const contacts: { x: number; z: number; radius: number }[] = [];
+      const contacts: { x: number; z: number }[] = [];
       ROSTER.forEach((def, i) => {
         const g = buildCharacterPreview(def, { yaw: 0.42 });
         g.position.x = x0 + i * spacing;
         renderer.world.add(g);
         contacts.push(
-          { x: g.position.x - 0.064, z: -0.028, radius: 0.1 },
-          { x: g.position.x + 0.064, z: 0.028, radius: 0.1 },
+          { x: g.position.x - 0.064, z: -0.028 },
+          { x: g.position.x + 0.064, z: 0.028 },
         );
       });
       (stage as BootstrapStage).setContactPoints(contacts);

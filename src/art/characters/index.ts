@@ -11,6 +11,12 @@ export { buildCharacter, buildCharacterPreview, disposeCharacterPreview } from '
 export { NEUTRAL_STANCE, setRigFlash, setRigSilhouette, bonePosition } from './rig';
 export type { BuildCharacterOptions, BuiltCharacter, PreviewOptions } from './rig';
 
+export { buildFace, faceControls } from './face';
+export type { FaceControls, FaceValues } from './face';
+
+export { HeadForm, faceSpec, refineHead } from './head';
+export type { FaceSpec, HeadRefineResult } from './head';
+
 export { buildBodyPlan, buildBodyGeometry, skinGeometry, computeSkinWeights, sampleField } from './body';
 export type { BodyPlan, BodyMeshOptions, BuiltBody, Prim, SkinData } from './body';
 

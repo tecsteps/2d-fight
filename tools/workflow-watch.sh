@@ -16,12 +16,12 @@
 # a dead faces agent for 26 minutes. So staleness is now tracked PER AGENT, for
 # agents the journal says started but never returned.
 #
-# Usage: tools/workflow-watch.sh <workflow-dir> <expected-agent-count> [stall-seconds]
+# Usage: tools/workflow-watch.sh <dir>:<count> [<dir>:<count> ...] [--stall N]
 #
 # Emits one line per event on stdout, for Monitor:
 #   DEAD      <agent> died with an API error   <- restart it
-#   STALL     <agent> silent for Ns            <- investigate, likely wedged
-#   COMPLETE  all N agents returned
+#   QUIET     <agent> has written nothing for Ns
+#   COMPLETE  all agents returned
 #
 # Watches one or more workflows. Monitor caps every watch at 30 minutes
 # regardless of `persistent`, so each extra monitor is another thing to re-arm
@@ -31,7 +31,7 @@ set -uo pipefail
 
 usage() { echo "usage: $0 <dir>:<agent-count> [<dir>:<agent-count> ...] [--stall N]" >&2; exit 2; }
 
-STALL=420
+STALL=900
 SPECS=()
 while (( $# )); do
   case "$1" in
@@ -43,6 +43,9 @@ done
 (( ${#SPECS[@]} )) || usage
 
 STALL_EVERY=6
+# A quiet agent is usually just thinking. Announce it rarely enough that the
+# signal keeps meaning something.
+QUIET_EVERY=40
 poll=0
 declare -A announced=()
 declare -A finished_wf=()
@@ -93,18 +96,31 @@ while true; do
       age=$(( now - $(stat -c %Y "$t") ))
       (( age <= STALL )) && continue
 
-      # A terminal API error leaves its message as the last thing in the
-      # transcript. Death and a wedge need different fixes: a corpse needs
-      # restarting, a wedge needs diagnosing first.
+      # Only one distinction here is reliable, so only one is claimed.
+      #
+      # DEAD is evidence-based: a terminal API error sits at the tail of the
+      # transcript, and the fix is to restart that agent.
+      #
+      # Everything else is just silence. An earlier version tried to separate
+      # "wedged on a command" from "thinking" by scanning ps for long-running
+      # node/python/chrome processes — but the agent harness itself runs on
+      # node, so that check fires on the agent's own runtime and calls every
+      # quiet agent wedged. Distinguishing them properly needs the agent's PID,
+      # which is not exposed. So QUIET reports the duration and lets a human
+      # judge, escalating its wording rather than pretending to a diagnosis.
       if tail -c 4000 "$t" | grep -qE 'API Error: (429|5[0-9][0-9])|Overloaded|rate.?limit'; then
-        kind="DEAD"; detail="died with an API error"
+        kind="DEAD"; detail="died with an API error — restart it"
+      elif (( age > STALL * 3 )); then
+        kind="QUIET"; detail="silent a long time — worth checking its transcript"
       else
-        kind="STALL"; detail="silent, likely wedged on a command"
+        kind="QUIET"; detail="silent (thinking, backoff, or a slow command)"
       fi
 
       key="$kind:$name:$a"
       n="${announced[$key]:-0}"
-      if (( n == 0 || n % STALL_EVERY == 0 )); then
+      every=$STALL_EVERY
+      [[ "$kind" == "QUIET" ]] && every=$QUIET_EVERY
+      if (( n == 0 || n % every == 0 )); then
         echo "$kind  [$name] ${a:0:12} $detail after ${age}s  (${done_n}/${EXPECTED} done)"
       fi
       announced[$key]=$(( n + 1 ))

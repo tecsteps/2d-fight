@@ -84,9 +84,10 @@ export interface ContactPoint {
   /** World Z. Defaults to 0, the fighting plane. */
   z?: number;
   /**
-   * Half-width of the contact patch in metres — roughly the sole's own radius,
-   * *not* the extent of the shadow. The falloff reaches about six times this.
-   * Default 0.10, which is a human foot.
+   * Half-*width* of the contact patch in metres — roughly the sole's own
+   * radius across the stance, *not* the extent of the shadow. The falloff
+   * reaches about six times this, and the patch is `CONTACT_Z_STRETCH` times
+   * longer along Z. Default 0.12, which is a human foot.
    */
   radius?: number;
   /**
@@ -133,6 +134,20 @@ export interface BootstrapStage extends Stage {
  * needs and is the point at which a fixed array stops being a limitation.
  */
 const MAX_CONTACTS = 12;
+
+/**
+ * How much longer the contact patch is along Z than across X.
+ *
+ * Two reasons, and they point the same way. A sole *is* about twice as long as
+ * it is wide, so this is the honest shape. And the fighting camera sits four
+ * degrees above the floor, which compresses Z on screen by roughly fifteen to
+ * one: a circular patch of the right physical size projects to a 140px-wide,
+ * 8px-tall sliver that the foot itself then covers most of, so it measures as
+ * present and reads as nothing. Stretched along Z the same shadow covers the
+ * rows immediately in front of the sole — which is the only part of it the
+ * camera can actually see.
+ */
+const CONTACT_Z_STRETCH = 2.0;
 
 /** Shared GLSL: one cheap value-noise field, used by the sky and the floor. */
 const NOISE_GLSL = /* glsl */ `
@@ -347,7 +362,7 @@ function makeFloor(): THREE.Mesh {
           // as moire crawling every time the camera moves — far more visible in
           // motion than the pattern is at rest.
           vec2 cell = p.xz / 0.42;
-          cell += vec2(sNoise(p.xz * 0.31), sNoise(p.xz * 0.31 + 19.7)) * 0.55;
+          cell += vec2(sNoise(p.xz * 0.55), sNoise(p.xz * 0.55 + 19.7)) * 0.32;
           vec2 w = fwidth(cell);
           float px = max(w.x, w.y);
           float detail = 1.0 - smoothstep(0.12, 0.5, px);
@@ -358,8 +373,8 @@ function makeFloor(): THREE.Mesh {
           slab *= 1.0 + (sHash(floor(cell)) - 0.5) * 0.05 * detail;
           // Two octaves of mottling. These survive at any distance and are what
           // stops the far floor going to a flat wash once the seams have faded.
-          slab *= 1.0 + (sNoise(p.xz * 0.42) - 0.5) * 0.10;
-          slab *= 1.0 + (sNoise(p.xz * 1.90) - 0.5) * 0.06 * detail;
+          slab *= 1.0 + (sNoise(p.xz * 0.95) - 0.5) * 0.09;
+          slab *= 1.0 + (sNoise(p.xz * 3.20) - 0.5) * 0.06 * detail;
 
           return depth * slab;
         }`,
@@ -407,7 +422,7 @@ function makeContactShadows(): THREE.Mesh {
   geo.rotateX(-Math.PI / 2);
 
   const contacts: THREE.Vector4[] = [];
-  for (let i = 0; i < MAX_CONTACTS; i++) contacts.push(new THREE.Vector4(0, 0, 0.1, 0));
+  for (let i = 0; i < MAX_CONTACTS; i++) contacts.push(new THREE.Vector4(0, 0, 0.12, 0));
 
   const mat = new THREE.ShaderMaterial({
     transparent: true,
@@ -443,14 +458,15 @@ function makeContactShadows(): THREE.Mesh {
         for (int i = 0; i < ${MAX_CONTACTS}; i++) {
           if (i >= uCount) break;
           vec4 c = uContacts[i];
-          float r = length(vPos.xz - c.xy) / max(c.z, 1e-3);
+          vec2 d = (vPos.xz - c.xy) / vec2(1.0, ${CONTACT_Z_STRETCH.toFixed(1)});
+          float r = length(d) / max(c.z, 1e-3);
           // Cut off past six radii, or the tail keeps a whole-floor multiply
           // alive that costs the same and does nothing but grey the plane.
           float fade = smoothstep(9.0, 3.0, r);
           // max, not sum: two feet 20cm apart are one occluder, and adding
           // their tails would put a dark band between a fighter's legs that
           // gets darker the closer they stand.
-          occ = max(occ, c.w * fade / (1.0 + pow(r / 1.35, 2.1)));
+          occ = max(occ, c.w * fade / (1.0 + pow(r / 1.7, 2.0)));
         }
         gl_FragColor = vec4(mix(vec3(1.0), uTint, clamp(occ, 0.0, 1.0)), 1.0);
       }
@@ -503,7 +519,7 @@ export function buildBootstrapStage(opts: BootstrapStageOptions = {}): Bootstrap
       }
       for (let i = 0; i < n; i++) {
         const p = points[i];
-        slots[i].set(p.x, p.z ?? 0, p.radius ?? 0.1, THREE.MathUtils.clamp(p.strength ?? 1, 0, 1));
+        slots[i].set(p.x, p.z ?? 0, p.radius ?? 0.12, THREE.MathUtils.clamp(p.strength ?? 1, 0, 1));
       }
       contactUniforms.uCount.value = n;
     },

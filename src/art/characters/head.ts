@@ -301,6 +301,8 @@ const _v = new THREE.Vector3();
 const _ax = new THREE.Vector3();
 const _rf = new THREE.Vector3();
 const _cr = new THREE.Vector3();
+const _sd = new THREE.Vector3();
+const _sn = new THREE.Vector3();
 
 class Sculpt {
   readonly prims: SPrim[] = [];
@@ -528,6 +530,39 @@ export class HeadForm {
 
   earCentre(side: number, out = new THREE.Vector3()): THREE.Vector3 {
     return this.world([side * (this.hw * 0.93), 0.415, -0.115], out);
+  }
+
+  /** Centre of the cranium, in world space. The scalp is star-shaped from here. */
+  craniumCentre(out = new THREE.Vector3()): THREE.Vector3 {
+    return this.world([0, 0.652, 0.005], out);
+  }
+
+  /**
+   * A point on the sculpted scalp, in `hair.ts`'s own angular convention:
+   * θ = 0 faces +Z, +θ turns toward +X, φ measured from the crown.
+   *
+   * This is the drop-in replacement for `hair.ts`'s `Skull.at()`. That class
+   * fits hair to the ellipsoid `body.ts` used before this pass, whose forehead
+   * ran 30 mm further forward than a skull's actually does — which is a large
+   * part of why the old head read as an ovoid. Now that the forehead leans back,
+   * hair fitted to the old ellipsoid hangs in front of the face; refitting it to
+   * this function puts it back on the scalp.
+   */
+  scalpPoint(theta: number, phi: number, lift = 0, out = new THREE.Vector3()): THREE.Vector3 {
+    const sp = Math.sin(phi);
+    const dir = _sd.set(sp * Math.sin(theta), Math.cos(phi), sp * Math.cos(theta)).normalize();
+    this.craniumCentre(out);
+    // Sphere-trace outward from the centre; the scalp is star-shaped about it.
+    let t = 0;
+    for (let i = 0; i < 40; i++) {
+      const d = this.sd(out.x + dir.x * t, out.y + dir.y * t, out.z + dir.z * t);
+      if (d > -this.HL * 5e-4) break;
+      t += Math.max(-d * 0.9, this.HL * 0.004);
+      if (t > this.HL * 1.4) break;
+    }
+    out.addScaledVector(dir, t);
+    if (lift !== 0) out.addScaledVector(this.normal(out, _sn), lift);
+    return out;
   }
 
   // --- the sculpt ---------------------------------------------------------

@@ -460,10 +460,10 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     // band inside the last 1% of the width, underneath the ink. −0.16 is the outer
     // ~5% of a limb's projected width, plus every downward-facing plane — jaw,
     // pectoral, forearm, calf — which is the run a painter inks the bounce along.
-    bounce: 0.9,
+    bounce: 0.55,
     bounceEdge: -0.16,
     bounceSoft: 0.05,
-    bounceLevel: 0.5,
+    bounceLevel: 0.42,
     terminatorNoise: 0.007,
     noiseScale: 26,
     // Trimmed because the ambient lift is multiplicative on the hemisphere's
@@ -1271,8 +1271,17 @@ void main() {
   // soft bounce is a Fresnel wash, and a Fresnel wash is the cheapest-looking
   // term in real-time NPR.
   if ( uBounce > 0.0 ) {
+    // Ordered edges. smoothstep is undefined when edge0 >= edge1, so the band is
+    // built as a rising step and inverted rather than written backwards — the
+    // first version of this line read smoothstep( hi, lo, keyNdl ) and rendered
+    // nothing at all, at any strength.
     float bounceAa = max( min( fwidth( keyNdl ) * 0.5, uBounceSoft ), 0.002 );
-    float bounce = smoothstep( uBounceEdge + bounceAa, uBounceEdge - bounceAa, keyNdl );
+    float bounce = 1.0 - smoothstep( uBounceEdge - bounceAa, uBounceEdge + bounceAa, keyNdl );
+    // Gated by the ramp as well, so the band can only live *inside* the shadow.
+    // Without this an additive keyed purely to geometry lands on whatever the
+    // ramp happened to put there, and on a near-black pixel a saturated additive
+    // is not reflected light, it is a blowout.
+    bounce *= 1.0 - ramp.r;
     // Scaled by the surface's own lightness for the same reason the subsurface
     // term is: a fixed additive lands as a blown-out stripe on the darkest
     // fighter and as nothing at all on the lightest.

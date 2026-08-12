@@ -61,10 +61,10 @@ import {
  * thigh, the swell of a ribcage — a few pixels of screen-space expansion move
  * that lining far enough along the depth slope to beat the outer face, and the
  * hull floods a hand-sized region of the garment solid black. Measured on Vera's
- * shorts at a 3.8 mm wall: two blots per cheek. At 14 mm: none. The lining is
- * never seen, so burying it inside the body costs nothing.
+ * shorts at a 3.8 mm wall: two blots per cheek. At 14 mm: one small one. The
+ * lining is never seen, so burying it inside the body costs nothing.
  */
-const WALL = 0.015;
+const WALL = 0.020;
 
 const DEG = Math.PI / 180;
 
@@ -219,9 +219,12 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
     radial: 54,
     lining: 3,
     follow: TORSO,
-    // Opens earlier than the vest's: a tank strap crosses the shoulder well
-    // inboard of an armhole seam, so it needs the deltoid sooner.
-    bridge: (s) => 0.15 * THREE.MathUtils.smoothstep(topAxis.pointAt(s).y, armpitY + 0.040, armpitY + 0.115),
+    // The *same* bridge the vest uses, and it has to be. Two shells at offsets
+    // a < b are guaranteed to nest only while they are lifted off the same
+    // surface; give the inner one an earlier bridge and it climbs onto the
+    // deltoid while the outer one is still on the ribs, and the crop top's strap
+    // erupts through the vest's shoulder as a plum wedge.
+    bridge: (s) => shoulderBridge(topAxis.pointAt(s).y),
     fromEdge: { fold: 0.010, roll: 0.0038, rings: 3 },
     toEdge: { fold: 0.009, roll: 0.0036, rings: 3 },
     drape: { folds: 5, amplitude: 0.0012, along: 1.6, seed: 17 },
@@ -254,10 +257,10 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
    */
   const vestLoft = ramp([
     [vestHemY, 0.020],
-    [lowRibY + 0.020, 0.026],
-    [chestY, 0.028],
-    [armpitY, 0.027],
-    [shoulderY - 0.020, 0.023],
+    [lowRibY + 0.020, 0.030],
+    [chestY, 0.032],
+    [armpitY, 0.031],
+    [shoulderY - 0.020, 0.025],
     [shoulderY + 0.030, 0.020],
     [neckY + 0.030, 0.018],
     [neckY + 0.080, 0.018],
@@ -275,11 +278,11 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
   const vestSide = byAngle([
     [0, 1],
     [45, 1],
-    [90, 0.72],
-    [135, 0.94],
+    [90, 0.80],
+    [135, 0.96],
     [180, 1],
-    [-135, 0.94],
-    [-90, 0.72],
+    [-135, 0.96],
+    [-90, 0.80],
     [-45, 1],
   ]);
 
@@ -331,16 +334,16 @@ export function buildVeraCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
   // top of the ribcage instead, the same rings finish as a neckline seam — which
   // is the only thing a stand collar can rise out of.
   const vestTopStops: [number, number][] = [
-    [22, neckY + 0.002],
-    [40, neckY + 0.006],
-    [55, neckY + 0.014],
-    [70, deltoidCrest - 0.024],
+    [22, neckY + 0.004],
+    [40, neckY + 0.018],
+    [55, neckY + 0.036],
+    [70, deltoidCrest - 0.020],
     [88, deltoidCrest + 0.012],
     [106, deltoidCrest + 0.008],
-    [122, deltoidCrest - 0.030],
-    [140, neckY + 0.012],
-    [160, neckY + 0.006],
-    [180, neckY + 0.004],
+    [122, deltoidCrest - 0.026],
+    [140, neckY + 0.030],
+    [160, neckY + 0.014],
+    [180, neckY + 0.008],
   ];
   const vestTop = edgeAtHeight(
     vestAxis,
@@ -760,14 +763,18 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
     const ankle = rig.joints[`foot${side}` as BoneName];
     const toe = rig.joints[`toe${side}` as BoneName];
     const FL = m.footLen;
-    // Same station points the foot volume was swept along in `body.ts`, so the
-    // boot axis threads the middle of the foot instead of skewing to the heel.
+    // Threads the middle of the foot along the stations the foot volume was
+    // swept from in `body.ts`, and then runs on past the heel and the toe at
+    // both ends. That overhang is what lets the shells close: a sweep that stops
+    // inside the foot can only ever end in a ring the foot pokes out of.
     const footAxis = axisFromPoints([
-      new THREE.Vector3(ankle.x, 0.033, ankle.z - FL * 0.17),
+      new THREE.Vector3(ankle.x, 0.030, ankle.z - FL * 0.32),
+      new THREE.Vector3(ankle.x, 0.038, ankle.z - FL * 0.16),
       new THREE.Vector3(ankle.x, 0.044, ankle.z - FL * 0.02),
       new THREE.Vector3((ankle.x + toe.x) * 0.5, 0.039, ankle.z + FL * 0.16),
       new THREE.Vector3(toe.x, 0.027, toe.z + FL * 0.02),
-      new THREE.Vector3(toe.x, 0.016, toe.z + FL * 0.21),
+      new THREE.Vector3(toe.x, 0.014, toe.z + FL * 0.24),
+      new THREE.Vector3(toe.x, 0.010, toe.z + FL * 0.42),
     ]);
     const shinAxis = chainAxis(body, [`shin${side}`, `foot${side}`] as BoneName[], 0);
     const shaftTopY = m.ankleY + 0.152;
@@ -783,15 +790,16 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
      * millimetres over the first and last tenth of the axis draws both openings
      * back onto the axis, where they sit inside the foot and close the form.
      */
-    const bootCap = (s: number): number => 0.006 + 0.3 * Math.min(1, Math.min(s, 1 - s) / 0.1);
+    const bootCap = (s: number): number =>
+      0.004 + 0.36 * Math.min(1, (Math.min(s, 1 - s) / 0.14) ** 2);
 
     // Upper. Angle 0 is up (the instep) because the axis runs horizontally, so
     // the anatomical-front hint would be degenerate.
     const upper = buildShell(body, {
       axis: footAxis,
-      from: 0.008,
-      to: 0.992,
-      offset: ramp([[0, 0.0095], [0.3, 0.0085], [0.8, 0.008], [1, 0.0075]]),
+      from: 0.02,
+      to: 0.98,
+      offset: ramp([[0, 0.0095], [0.35, 0.0085], [0.85, 0.008], [1, 0.0075]]),
       maxRadius: bootCap,
       cloth: WALL * 0.75,
       segments: 20,
@@ -859,7 +867,7 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
       }).geometry;
     wear(rig, {
       name: `bootPanel${side}`,
-      geometry: mergeGeometry([panel(0.04, 0.30), panel(0.80, 0.988)]),
+      geometry: mergeGeometry([panel(0.14, 0.36), panel(0.72, 0.965)]),
       kind: 'leather',
       color: 0x4a4d56,
       shadowColor: 0x24262c,
@@ -874,8 +882,8 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
     // with an offset here sinks through the stage unless it is clipped.
     const sole = buildShell(body, {
       axis: footAxis,
-      from: 0.008,
-      to: 0.99,
+      from: 0.02,
+      to: 0.975,
       offset: 0.0175,
       maxRadius: (s) => bootCap(s) + 0.008,
       cloth: 0.009,
@@ -912,7 +920,7 @@ function buildBoots(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
           surfaceCurve(body, {
             axis: footAxis,
             samples: 44,
-            s: (t) => THREE.MathUtils.lerp(0.40, 0.68, t),
+            s: (t) => THREE.MathUtils.lerp(0.40, 0.60, t),
             angle: (t) => hand * 0.52 * zigzag(t * 2.5 + 0.25),
             offset: 0.0162,
             front: UP,
