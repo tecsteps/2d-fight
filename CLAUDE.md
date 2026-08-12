@@ -15,6 +15,10 @@ be stopped at any time**. Nothing survives except what is committed and pushed.
 1. **Prefer short workflows over long ones.** Split `dev` and `verify` into
    separate workflow invocations. A workflow that runs >15 min is a workflow that
    will get killed halfway. Target ~5–10 min per invocation.
+   **This box has 4 cores, so the workflow concurrency cap is 2.** A "parallel"
+   wave of 6 agents actually runs three pairs back to back. Size waves at 4–6
+   agents and expect them to serialize — a 10-agent wave is a 40-minute workflow
+   wearing a costume, and it will get killed.
 2. **Always set a wakeup timer when a workflow is running.** Use
    `ScheduleWakeup` (dynamic `/loop` mode) with a fallback heartbeat of
    1200–1800s. On wake: call `TaskList`; if the workflow is gone/dead and its
