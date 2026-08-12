@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>2D-FIGHT</title>
+    <style>
+      html, body { margin: 0; padding: 0; height: 100%; background: #05060a; overflow: hidden; }
+      body { display: grid; place-items: center; }
+      #stage { display: block; width: 100vw; height: 100vh; touch-action: none; }
+      #boot {
+        position: fixed; inset: 0; display: grid; place-items: center;
+        font: 600 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #7d8598; letter-spacing: .18em; text-transform: uppercase;
+        background: #05060a; transition: opacity .5s ease; pointer-events: none;
+      }
+      #boot.gone { opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+    <div id="boot">Loading</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

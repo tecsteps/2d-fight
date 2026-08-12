@@ -1,0 +1,36 @@
+{
+  "name": "2d-fight",
+  "version": "1.0.0",
+  "description": "A KOF XIII-class 2.5D fighting game in Three.js",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "shots": "node tools/shots/capture.mjs",
+    "build:check": "node tools/check-no-reference-imports.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tecsteps/2d-fight.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/tecsteps/2d-fight/issues"
+  },
+  "homepage": "https://github.com/tecsteps/2d-fight#readme",
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.4",
+    "playwright": "^1.62.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1",
+    "vite-plugin-glsl": "^1.6.1"
+  },
+  "type": "module"
+}
