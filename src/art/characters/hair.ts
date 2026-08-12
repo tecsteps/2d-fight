@@ -798,7 +798,8 @@ function buildKai(ctx: Ctx): void {
   // A hachimaki: tied at the back, riding over the hair, and all but hidden at
   // the front under the fringe — which is exactly how it reads on the sheet.
   const bandPhi = profile([100, 99, 96, 93, 92].map((d) => d * DEG));
-  const bandLift = profile([R * 0.24, R * 0.26, R * 0.26, R * 0.3, R * 0.32]);
+  // Under the fringe at the front, over the hair everywhere else.
+  const bandLift = profile([R * 0.14, R * 0.2, R * 0.26, R * 0.3, R * 0.32]);
   const bandPts: THREE.Vector3[] = [];
   const BAND = 40;
   for (let i = 0; i < BAND; i++) {
@@ -811,7 +812,7 @@ function buildKai(ctx: Ctx): void {
     return skull.normalAt(theta, bandPhi(theta));
   });
   sweep(tie, bandFrames.slice(0, BAND), {
-    radius: () => skull.headLen * 0.085,
+    radius: () => skull.headLen * 0.055,
     flat: () => 0.075,
     sides: 10,
     tile: ctx.tile,
@@ -1319,11 +1320,20 @@ export function buildHair(rig: BuiltCharacter, def: FighterDef = rig.def): THREE
   const hairMat = createToonMaterial({
     kind: 'hair',
     color: detailBase(strandTex.map, base),
-    shadowColor: p.hair,
+    // The darkest authored tone, lifted off the floor: a hair shadow that lands
+    // on the palette's black leaves the shadow side with no form in it at all,
+    // and on a two-band ramp the shadow side is most of the head.
+    shadowColor: new THREE.Color(p.hair).lerp(base, 0.3),
     rimColor: p.rim,
     map: strandTex.map,
     normalMap: strandTex.normalMap,
     normalScale: 0.55,
+    // Three tones, not the kind's default two: black hair needs a mid value or
+    // the whole head collapses into the highlight band and a silhouette.
+    bands: 3,
+    // The kind is tuned for a broad sheen on a big mass; on locks and spikes a
+    // full-strength band turns the head into wet vinyl.
+    specular: 0.46,
     outlineColor: inkColor(p.hair),
     // Locs and wisps are a couple of centimetres across; a full-weight ink line
     // on each would fuse the whole head back into one mass.
