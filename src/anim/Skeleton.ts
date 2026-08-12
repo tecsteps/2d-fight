@@ -242,8 +242,11 @@ export function rigMetrics(def: FighterDef): RigMetrics {
   // in past their own lat and hip mass, and a lean one has no reason not to —
   // which is the difference between a blocky silhouette with daylight either
   // side of the torso and a single tall column.
-  const need =
-    hipJointX + thighR + palmHalf * 1.35 + H * (0.01 + 0.026 * build) - armJointX;
+  // What the arm has to clear is whichever is wider — the thigh or the hip
+  // silhouette itself. Mali's glutes reach further out than her thigh does, and
+  // measuring against the thigh alone laid her forearm straight onto her hip.
+  const bodyOut = Math.max(hipJointX + thighR, hipHalf);
+  const need = bodyOut + palmHalf * 1.35 + H * (0.01 + 0.026 * build) - armJointX;
   const reach = upperArmLen + forearmLen * A_POSE_FOREARM_RATIO;
   const armSpread = THREE.MathUtils.clamp(
     Math.asin(THREE.MathUtils.clamp(need / reach, 0, 0.75)),

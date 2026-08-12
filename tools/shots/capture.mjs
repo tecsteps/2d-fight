@@ -29,6 +29,7 @@ const TAG = args.tag ?? 'frame';
 const SCENE = args.scene ?? 'lineup';
 const FIGHTER = args.fighter ?? '';
 const POST = args.post ?? '1';
+const YAW = args.yaw ?? '';
 // Fighters as flat white on black, no stage, no post — the mask
 // `tools/critic/measure.py --matte` needs to know which pixels are fighter
 // without guessing from brightness. Shoot it alongside the look frame at the
@@ -36,14 +37,19 @@ const POST = args.post ?? '1';
 const MATTE = args.matte === true || args.matte === '1';
 
 const server = await createServer({
-  server: { port: 5199, strictPort: true, host: '127.0.0.1' },
+  // Not a fixed port: several agents capture concurrently and a hardcoded port
+  // makes them fail each other with EADDRINUSE. Start from a per-process offset
+  // and let Vite walk upward to the first free one.
+  server: { port: 5200 + (process.pid % 400), strictPort: false, host: '127.0.0.1' },
   logLevel: 'error',
 });
 await server.listen();
+const port = server.config.server.port ?? server.httpServer?.address()?.port;
 const q = new URLSearchParams({ scene: SCENE, post: POST });
 if (FIGHTER) q.set('fighter', FIGHTER);
+if (YAW) q.set('yaw', YAW);
 if (MATTE) q.set('matte', '1');
-const url = `http://127.0.0.1:5199/?${q}`;
+const url = `http://127.0.0.1:${port}/?${q}`;
 
 // The container ships a Chromium build that may not match the revision this
 // Playwright wants. Point straight at it rather than downloading — the image is

@@ -45,6 +45,10 @@ const soloId = params.get('fighter') ?? 'kai';
  */
 const matte = params.get('matte') === '1';
 const usePost = params.get('post') !== '0' && !matte;
+// Turnaround control. A silhouette element that hangs behind the body — a
+// braid, a hood, a sash tail — is invisible from the default three-quarter
+// view, so verifying one means being able to spin the fighter.
+const yaw = params.has('yaw') ? parseFloat(params.get('yaw')!) : 0.42;
 
 const canvas = document.getElementById('stage') as HTMLCanvasElement;
 const renderer = new Renderer(canvas, QUALITY_HIGH);
@@ -92,7 +96,7 @@ function buildScene(): void {
       renderer.background.add(stage.background);
       renderer.world.add(stage.world);
       const def = fighterById(soloId);
-      const g = buildCharacterPreview(def, { yaw: 0.42 });
+      const g = buildCharacterPreview(def, { yaw });
       renderer.world.add(g);
       stage.setContactPoints(footContacts(g.position.x));
       frameOn(new THREE.Box3(
