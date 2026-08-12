@@ -904,7 +904,7 @@ function buildHand(P: Plan, m: RigMetrics, elbow: THREE.Vector3, wrist: THREE.Ve
       at(t0, a0, -PT * 0.06),
       at(t1, THREE.MathUtils.lerp(a0, a1, 0.28), PT * 0.2),
       r0,
-      r0 * 0.9,
+      r0 * 1.0,
       { sz: 1.24, n: 2.7, ref: REF, k: 0.005 * H },
     );
     P.seg(
@@ -1229,7 +1229,7 @@ const EDGE = [
 function surfaceNets(plan: BodyPlan, density: number): RawMesh {
   const { prims, metrics: m, joints: j } = plan;
   const H = m.height;
-  const step = H / 58 / density;
+  const step = H / 56 / density;
 
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
@@ -1262,8 +1262,8 @@ function surfaceNets(plan: BodyPlan, density: number): RawMesh {
 
   const xs = gradedAxis(minX - pad, maxX + pad, step, [
     { lo: -0.1 * H, hi: 0.1 * H, mul: 2.2 },
-    { lo: handX0, hi: handX1, mul: 2.8 },
-    { lo: -handX1, hi: -handX0, mul: 2.8 },
+    { lo: handX0, hi: handX1, mul: 3.4 },
+    { lo: -handX1, hi: -handX0, mul: 3.4 },
   ]);
   const ys = gradedAxis(minY - pad, maxY + pad, step, [
     { lo: m.neckBaseY - 0.02 * H, hi: H + 0.02 * H, mul: 2.6 },

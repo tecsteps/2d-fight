@@ -151,6 +151,22 @@ The bloom halo and the relocated floor-pool bug are both genuinely gone. The
 remaining failures are all character shading, still in flight — the −140° outlier
 is the magenta blotching visible on skin.
 
+## Observations awaiting review 003
+
+- **Vera's `build: 0.97` overcorrected.** Divergence was the right call and the
+  numbers moved, but she now reads as a bodybuilder caricature rather than a
+  catch wrestler: shoulders and arms inflated, head too small against the mass,
+  neck short and thick. The reference is heavy and *athletic*. The target was
+  "reads as the strongest fighter on the roster", not "maximum mass". Expect to
+  pull build back toward ~0.80–0.85 and let shoulder width and leg ratio carry
+  the read instead.
+- **Her vest shoulder flaps read as armour**, not as a cropped puffer. The
+  garment stands too far off the deltoid.
+- **Magenta shadow blotching persists** on skin — the −140 degree hue outlier in
+  the budget table. Cel-bands agent still in flight.
+- **Hands now have fingers and thumbs**, and feet have toe breaks. The topology
+  finding from reviews 001 and 002 is fixed.
+
 ## Queued for integration
 
 1. ~~**A matte pass for `measure.py`.**~~ **Done** — built by the wave C stage
