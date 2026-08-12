@@ -55,16 +55,24 @@ SYSTEMS = [
      "Fixed 60 Hz loop, seeded xoshiro128**, facing-relative motion parser."),
     ("Roster data", "done", 5,
      "Four fighters: palettes eyedropped from the sheets, per-archetype tuning."),
-    ("Character rig + body mesh", "work", 1,
-     "Procedural humanoid swept from profile curves, weighted to a shared rig."),
-    ("NPR shading", "work", 1,
-     "Banded diffuse with hue-shifted shadow, per-surface treatment, ink outline."),
-    ("Post stack", "work", 1,
-     "Bloom, in-code LUT grade, chromatic aberration, speed lines, grain."),
-    ("Engine: states + combat", "work", 1,
-     "CNS-shaped states, CLSN boxes, hitstop, KOF cancel hierarchy, gauges."),
-    ("Procedural textures", "work", 1,
-     "Noise kit, quilted / satin / knit / wrap weaves, skin pores, hair sheen."),
+    ("Character rig + body mesh", "done", 4,
+     "Closed genus-0 manifolds at ~20k tris, built in under a second each."),
+    ("NPR shading", "done", 4,
+     "Luminance-weighted light loop, one terminator per rig, ink outlines."),
+    ("Post stack", "done", 4,
+     "Bloom, in-code LUT grade, aberration, speed lines, streak, grain."),
+    ("Engine: states + combat", "done", 4,
+     "CNS-shaped states, CLSN boxes, hitstop, cancel hierarchy, gauges, match."),
+    ("Procedural textures", "done", 4,
+     "Noise kit, quilted / satin / knit / wrap weaves, skin, hair, stage."),
+    ("Costumes", "work", 1,
+     "Offset-surface garment shells with finished hems, plus draped free cloth."),
+    ("Hair", "work", 1,
+     "Braided mohawk, segmented braid, separate locs, tied topknot — geometry."),
+    ("Faces", "work", 1,
+     "Features as geometry, eyes with a catch light, expression controls."),
+    ("Lighting + grade", "work", 1,
+     "Fixing the orange crush that flattens four skin tones into one."),
     ("Animation clips", "idle", 0,
      "Hand-keyed poses at a quantised draw rate to read as drawn, not lerped."),
     ("Stages", "idle", 0, "Parallax depth, animated crowd, volumetric light."),
@@ -74,6 +82,19 @@ SYSTEMS = [
 ]
 
 LOG = [
+    ("2026-08-12", "Wave B1 fanned out",
+     "Costume framework, hair, faces, and a lighting fix — four narrowly scoped "
+     "agents. Wave A taught the lesson: its two subsystem-sized agents ran two "
+     "hours, the three file-sized ones finished in twenty minutes."),
+    ("2026-08-12", "Every capture so far was a 6x upscale",
+     "The renderer's resize() early-returned on its first call, so the canvas "
+     "kept its default 300x150 backing store stretched to full screen. It read "
+     "as a blurry post stack and survived disabling post entirely."),
+    ("2026-08-12", "Wave A integrated — zero type errors",
+     "Five parallel agents, 16k lines, compiled together on the first try "
+     "against the pre-agreed interface contracts. Bodies verified as closed "
+     "genus-0 manifolds; the NPR light loop weights by per-light luminance so a "
+     "three-point rig yields one terminator instead of three."),
     ("2026-08-12", "Scaffold landed",
      "Deterministic loop, seeded RNG, input buffer with motion recognition, "
      "render root with parallax layers, rail camera with trauma shake. Build green."),
@@ -89,6 +110,13 @@ LOG = [
 ]
 
 SHOTS = [
+    ("lineup2-0000.png", "Four fighters — first real render",
+     "Bodies, cel banding and ink outlines all working. Also the honest gap: "
+     "nude, bald, faceless, and four distinct skin tones crushed into one "
+     "orange. Wave B1 is closing exactly this."),
+    ("lineup-0000.png", "The same frame before the resize fix",
+     "Identical scene at a 300x150 backing store. Kept as the reminder that a "
+     "quality problem is sometimes a one-line bug."),
     ("boot-0000.png", "Pipeline proof — frame 0",
      "Placeholder capsules under the key/fill/rim rig. Not the game; the proof "
      "that the build renders, seeks to a deterministic frame, and captures."),
