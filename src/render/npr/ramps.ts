@@ -508,15 +508,20 @@ export function fitValueBand(color: THREE.ColorRepresentation, spec: ValueBandSp
  *
  * The ramp's B channel now masks the darkest band with a hard feathered edge
  * rather than a squared gradient reaching up to the terminator, so this lands as
- * a form-shadow *shape* and can afford to bite harder than it used to.
+ * a form-shadow *shape* — but that also means it applies at full strength across
+ * the whole band instead of fading in, and `strength` has to be turned down for
+ * surfaces whose darkest band covers a lot of screen. The first pass left the
+ * stage at full strength and measured the cost: the receding floor went from
+ * S66/V29 to S10/V16, because a 0.55 multiplier on red is grey mud when it covers
+ * half the frame.
  */
 export function coreShadowTint(base: THREE.ColorRepresentation, strength = 1): THREE.Color {
   const c = new THREE.Color(base);
   c.getHSL(_hsl, THREE.SRGBColorSpace);
   // Warm surfaces lose slightly more red than already-cool ones do.
   const warm = Math.cos((_hsl.h - 0.08) * Math.PI * 2) * 0.5 + 0.5;
-  const k = strength * (0.17 + 0.13 * warm);
-  return c.setRGB(1 - k * 1.5, 1 - k, 1 - k * 0.1);
+  const k = strength * (0.14 + 0.1 * warm);
+  return c.setRGB(1 - k * 1.4, 1 - k, 1 - k * 0.15);
 }
 
 /**
