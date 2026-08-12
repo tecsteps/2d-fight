@@ -68,6 +68,9 @@ const WEAVE = 0.55;
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+/** How far each trouser leg reaches past the sagittal plane. See `midlineCap`. */
+const PAST = 0.026;
+
 /** The trunk. Anything a torso garment should lie on, and nothing it should engulf. */
 const TORSO = (b: BoneName): boolean =>
   b === 'hips' || b === 'spine' || b === 'chest' || b === 'neck' || b === 'shoulderL' || b === 'shoulderR';
@@ -237,13 +240,18 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
      * `keepSide` then folds every one of those samples back onto the sagittal
      * plane, and a hundred vertices landing on one plane is a fan with no
      * surface normal: the crease ink pass reads it as one enormous fold and
-     * fills the fly and the seat with solid black. Stopping the ray at the
-     * midline keeps the inseam a seam.
+     * fills the fly and the seat with solid black.
+     *
+     * So an inward ray is stopped once it has crossed the midline by `PAST`,
+     * which bounds how much cloth `keepSide` can ever be asked to fold. The
+     * margin is deliberately not tight: the two shells have to meet across the
+     * gluteal cleft and across the fly, and the part of each that reaches over
+     * to do it is buried inside the pelvis anyway — it costs nothing and it is
+     * the difference between a seam and a hole.
      */
     const midlineCap = (s: number, angle: number): number => {
       const inward = -Math.sin(angle) * sign;
-      if (inward < 0.25) return 9;
-      return (axis.pointAt(s).x * sign + 0.012) / inward;
+      return (Math.abs(axis.pointAt(s).x) + PAST) / Math.max(inward, 0.22);
     };
 
     const shell = buildShell(body, {
@@ -259,7 +267,9 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       // straight into the layer above it.
       toEdge: { fold: 0.012, roll: 0.005, rings: 3 },
       maxRadius: (s, _u, angle) => midlineCap(s, angle),
-      keepSide: { normal: new THREE.Vector3(sign, 0, 0), d: -0.004, softness: 0.008 },
+      // A backstop, not the mechanism: `midlineCap` has already bounded the
+      // excursion, and this only catches the rays it releases.
+      keepSide: { normal: new THREE.Vector3(sign, 0, 0), d: -PAST - 0.002, softness: 0.010 },
       tileMetres: tex.garments.abada.tileMetres * WEAVE,
     });
     // Off the shadow map's receiving list, and this one is not cosmetic. The
@@ -473,25 +483,25 @@ function buildHoodie(
   // The front opening. The arc stops 16° short of the sternum on each side, and
   // over the next 40° the hem climbs from the crop line to the collarbone —
   // which is the diagonal lapel edge, carried as a rolled hem rather than a cut.
-  const GAP = 16 * DEG;
+  const GAP = 12 * DEG;
   const hem = edgeAtHeight(axis, [
-    [16, m.neckBaseY - 0.088],
-    [24, m.neckBaseY - 0.176],
-    [34, hemY + 0.115],
-    [42, hemY + 0.022],
-    [50, hemY + 0.000],
-    [66, hemY + 0.020],
+    [12, m.neckBaseY - 0.086],
+    [18, m.neckBaseY - 0.170],
+    [27, hemY + 0.112],
+    [36, hemY + 0.024],
+    [47, hemY + 0.000],
+    [64, hemY + 0.020],
     [92, hemY + 0.046],
     [120, hemY + 0.064],
     [180, hemY + 0.074],
     [-120, hemY + 0.064],
     [-92, hemY + 0.046],
-    [-66, hemY + 0.020],
-    [-50, hemY + 0.000],
-    [-42, hemY + 0.022],
-    [-34, hemY + 0.115],
-    [-24, m.neckBaseY - 0.176],
-    [-16, m.neckBaseY - 0.088],
+    [-64, hemY + 0.020],
+    [-47, hemY + 0.000],
+    [-36, hemY + 0.024],
+    [-27, hemY + 0.112],
+    [-18, m.neckBaseY - 0.170],
+    [-12, m.neckBaseY - 0.086],
   ]);
   /**
    * The shoulder seam and neckline.
@@ -504,10 +514,10 @@ function buildHoodie(
    * a hoodie's shoulder seam actually sits.
    */
   const seam = edgeAtHeight(axis, [
-    [16, m.neckBaseY - 0.046],
-    [26, m.neckBaseY - 0.020],
-    [42, m.neckBaseY + 0.012],
-    [62, m.neckBaseY + 0.032],
+    [12, m.neckBaseY - 0.052],
+    [20, m.neckBaseY - 0.026],
+    [34, m.neckBaseY + 0.008],
+    [56, m.neckBaseY + 0.030],
     [84, m.neckBaseY + 0.040],
     [104, m.neckBaseY + 0.042],
     [132, m.neckBaseY + 0.050],
@@ -515,10 +525,10 @@ function buildHoodie(
     [-132, m.neckBaseY + 0.050],
     [-104, m.neckBaseY + 0.042],
     [-84, m.neckBaseY + 0.040],
-    [-62, m.neckBaseY + 0.032],
-    [-42, m.neckBaseY + 0.012],
-    [-26, m.neckBaseY - 0.020],
-    [-16, m.neckBaseY - 0.046],
+    [-56, m.neckBaseY + 0.030],
+    [-34, m.neckBaseY + 0.008],
+    [-20, m.neckBaseY - 0.026],
+    [-12, m.neckBaseY - 0.052],
   ]);
   // The two free panels hang off the chest instead of lying on it; the closed
   // back does not.

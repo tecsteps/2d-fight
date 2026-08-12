@@ -6,3 +6,4 @@ dist/
 .npr-bench/
 *.tmp
 shots/
+__pycache__/

@@ -31,10 +31,34 @@ import type { FighterDef } from '../data/roster';
  *   armpit clearance instead of buying it with pose angle.
  */
 
-/** Arm spread at rest, from vertical. Shallow on purpose — see above. */
-const A_POSE_ABDUCTION = 0.34;
+/**
+ * Bounds on the rest arm spread, which is **derived per fighter**, not fixed.
+ *
+ * It used to be one constant, and that single number was the largest reason the
+ * roster measured as one body: lateral hand position is `armJointX +
+ * armLen·sin(spread)`, `armLen` is a fixed fraction of height and `armJointX`
+ * is `shoulderHalf − 0.92·deltoidR`, in which a wider shoulder and the bigger
+ * deltoid that comes with it cancel. Every fighter's hands therefore landed at
+ * the same fraction of their own height and the widest measurement on the
+ * figure — which is what a width/height ratio reads — was identical by
+ * construction.
+ *
+ * Anatomically the angle is not free anyway: a fighter carries the arms as far
+ * out as their own lat and thigh mass forces them to, so `rigMetrics` solves
+ * for the spread that clears the thigh by a fixed margin. Vera ends up carrying
+ * her arms visibly wider than Davi because she is visibly thicker, and the
+ * "hands merged into the thighs" defect from review 001 cannot come back
+ * without the clearance term being changed on purpose.
+ *
+ * The cost is that rest arm direction is no longer identical across fighters,
+ * so an authored absolute arm rotation puts two fighters' fists in slightly
+ * different places. That is the same trade already accepted for limb length,
+ * and the identity-rest-rotation convention above is untouched.
+ */
+const A_POSE_ABDUCTION_MIN = 0.16;
+const A_POSE_ABDUCTION_MAX = 0.46;
 /** Forearm carries a touch less spread than the upper arm, as a real arm hangs. */
-const A_POSE_FOREARM_ABDUCTION = 0.3;
+const A_POSE_FOREARM_RATIO = 0.88;
 /** Elbows and knees are never dead straight at rest, or IK has no pole to pick. */
 const ELBOW_PREBEND = 0.07;
 const KNEE_PREBEND = 0.045;
@@ -86,9 +110,8 @@ export interface RigMetrics {
   /** 0 = lean, 1 = heavily built. Straight from the data. */
   build: number;
   /**
-   * 0 = male silhouette, 1 = female. Read off the hip:shoulder ratio rather than
-   * a flag, because that ratio is the thing an artist actually draws: Vera and
-   * Mali land at 1, Kai barely registers, Davi is 0.
+   * 0 = male silhouette, 1 = female. Authored in `Proportions`, not inferred
+   * from hip:shoulder — see the note there for why the inference had to go.
    */
   fem: number;
   /** Chin to crown. */
@@ -125,16 +148,51 @@ export interface RigMetrics {
   handLen: number;
   upperArmLen: number;
   forearmLen: number;
+
+  // --- Rest carriage, solved rather than authored -----------------------------
+  /** Upper-arm abduction at rest, radians from vertical. See the bounds above. */
+  armSpread: number;
+  /** Forearm abduction at rest. */
+  foreSpread: number;
+  /** Half the distance between the two hip joints. */
+  hipJointX: number;
+
+  // --- Hand ------------------------------------------------------------------
+  /**
+   * Half the palm width across the knuckles.
+   *
+   * Hands are built ~15% over anatomical on purpose. A fighting-game camera
+   * puts a fighter at 450–900 px and the hand is what the player's eye tracks;
+   * at anatomical scale four fingers are 2 px each and the only honest choice
+   * is a mitten. Oversized, the same four fingers are 4–5 px and separate.
+   */
+  palmHalf: number;
+  /** Half the palm thickness, front to back. */
+  palmThick: number;
+  /** Radius of one finger at its knuckle. */
+  fingerR: number;
+
+  // --- Foot ------------------------------------------------------------------
+  /** Half the foot width at the ball. */
+  footHalf: number;
+  /** Radius of the heel mass. */
+  heelR: number;
+  /** Toes, from the ball of the foot to the tip. */
+  toeLen: number;
+  /** Half the distance between the two ankles at rest. */
+  ankleX: number;
 }
 
 export function rigMetrics(def: FighterDef): RigMetrics {
   const p = def.proportions;
   const H = p.height;
   const build = p.build;
-  const fem = THREE.MathUtils.smoothstep(p.hip / p.shoulder, 0.755, 0.8);
+  const fem = p.fem;
 
   const headLen = H * p.headRatio;
-  const neckLen = H * 0.042;
+  // Heavy fighters have short necks, and the neck is a surprisingly loud read:
+  // it is the only vertical gap between two big masses in the silhouette.
+  const neckLen = H * (0.048 - 0.012 * build);
   const legLen = H * p.legRatio;
   const neckBaseY = H - headLen - neckLen;
   const torsoLen = neckBaseY - legLen;
@@ -142,22 +200,47 @@ export function rigMetrics(def: FighterDef): RigMetrics {
   const shoulderHalf = H * p.shoulder * 0.5;
   const hipHalf = H * p.hip * 0.5;
 
-  // Limb girths. Build moves them a long way — Vera's arm is ~40% thicker than
-  // Davi's at the same height — and the female pass trims the upper body a
-  // little without touching the legs, which is how the two silhouettes differ.
-  const upperArmR = H * (0.0225 + 0.0185 * build) * (1 - 0.05 * fem);
-  const deltoidR = upperArmR * 1.4 + H * 0.005 * build;
-  const forearmR = upperArmR * (0.9 + 0.05 * build);
-  const wristR = upperArmR * (0.55 - 0.03 * fem);
-  // Thigh girth is tied to the authored hip width: the outer sweep of the thigh
-  // must land just past the hip silhouette or the legs read as sticks under a
-  // wide pelvis.
-  const thighR = H * (0.039 + 0.02 * build) * (1 + 0.05 * fem);
-  const kneeR = thighR * 0.63;
-  // Kept clear of the other calf: two legs that fuse at rest share vertices,
-  // and shared vertices tear into a sheet the moment a stance splits them.
-  const calfR = thighR * (0.6 + 0.05 * build);
-  const ankleR = thighR * 0.36;
+  // Limb girths. These carry most of `build`, and the coefficients are roughly
+  // double what they were: the old 0.0225 + 0.0185·build put Vera's arm 23%
+  // thicker than Davi's, and the design sheets show more like 50%. The constant
+  // term is the skeleton plus skin, the build term is the muscle.
+  const upperArmR = H * (0.017 + 0.03 * build) * (1 - 0.06 * fem);
+  const deltoidR = upperArmR * (1.3 + 0.3 * build);
+  const forearmR = upperArmR * (0.86 + 0.1 * build);
+  const wristR = upperArmR * (0.58 - 0.04 * fem);
+  const thighR = H * (0.0335 + 0.0255 * build) * (1 + 0.05 * fem);
+  const kneeR = thighR * (0.66 - 0.06 * build);
+  const calfR = thighR * (0.62 + 0.05 * build);
+  const ankleR = thighR * (0.38 - 0.04 * build);
+
+  const armLen = H * p.armRatio;
+  const upperArmLen = armLen * 0.556;
+  const forearmLen = armLen * 0.444;
+
+  // Hip joints sit at half the hip width, *or* far enough apart that the two
+  // thighs do not fuse across the midline — whichever is wider. Vera's thigh
+  // radius exceeds half her own hip width, so without the second term her legs
+  // merge into one column below the crotch and the inner-leg contour, which is
+  // half of what makes a stance read, disappears.
+  const hipJointX = Math.max(hipHalf * 0.52, thighR * 1.06);
+  const armJointX = shoulderHalf - deltoidR * 0.92;
+
+  const handLen = H * (0.112 + 0.02 * build) * (1 - 0.04 * fem);
+  const palmHalf = handLen * 0.268;
+  const footLen = H * (0.15 + 0.012 * build) * (1 - 0.02 * fem);
+
+  // Rest arm spread, solved for clearance rather than authored: put the outer
+  // edge of the palm one thigh-radius plus a fixed margin outside the hip
+  // joint. `asin` of the required lateral travel over the reach that produces
+  // it, since the forearm keeps `A_POSE_FOREARM_RATIO` of the upper arm's
+  // angle.
+  const need = hipJointX + thighR + palmHalf + H * 0.026 - armJointX;
+  const reach = upperArmLen + forearmLen * A_POSE_FOREARM_RATIO;
+  const armSpread = THREE.MathUtils.clamp(
+    Math.asin(THREE.MathUtils.clamp(need / reach, 0, 0.75)),
+    A_POSE_ABDUCTION_MIN,
+    A_POSE_ABDUCTION_MAX,
+  );
 
   return {
     def,
@@ -169,13 +252,15 @@ export function rigMetrics(def: FighterDef): RigMetrics {
     legLen,
     torsoLen,
     neckBaseY,
-    ankleY: H * 0.039,
-    footLen: H * (0.152 - 0.006 * fem),
+    ankleY: H * (0.038 + 0.005 * build),
+    footLen,
     shoulderHalf,
     hipHalf,
     chestHalf: shoulderHalf * (0.71 + 0.06 * build),
-    waistHalf: hipHalf * (0.68 - 0.09 * fem + 0.05 * build),
-    torsoDepth: 0.63 + 0.1 * build + 0.04 * fem,
+    // Waist is the V-taper, so it takes `fem` and `build` in the same
+    // direction: both narrow it relative to the hip it is measured against.
+    waistHalf: hipHalf * (0.72 - 0.1 * fem - 0.04 * build),
+    torsoDepth: 0.6 + 0.16 * build + 0.05 * fem,
     upperArmR,
     deltoidR,
     forearmR,
@@ -184,13 +269,23 @@ export function rigMetrics(def: FighterDef): RigMetrics {
     kneeR,
     calfR,
     ankleR,
-    neckR: H * (0.026 + 0.011 * build) * (1 - 0.13 * fem),
+    neckR: H * (0.024 + 0.014 * build) * (1 - 0.13 * fem),
     // Half-width of the cranium mass, so hair and headgear can be fitted to
     // the same number the skull was built from.
     skullR: headLen * 0.345,
-    handLen: H * (0.105 - 0.005 * fem),
-    upperArmLen: H * 0.185,
-    forearmLen: H * 0.148,
+    handLen,
+    upperArmLen,
+    forearmLen,
+    armSpread,
+    foreSpread: armSpread * A_POSE_FOREARM_RATIO,
+    hipJointX,
+    palmHalf,
+    palmThick: handLen * 0.108,
+    fingerR: palmHalf * 0.235,
+    footHalf: footLen * 0.205,
+    heelR: footLen * 0.15,
+    toeLen: footLen * 0.185,
+    ankleX: hipJointX * 0.8,
   };
 }
 
@@ -209,12 +304,13 @@ export function restJoints(m: RigMetrics): JointMap {
   const shoulderY = m.neckBaseY - H * 0.028;
   const armJointX = m.shoulderHalf - m.deltoidR * 0.92;
   const clavX = H * 0.019;
-  const hipJointX = m.hipHalf * 0.5;
+  const hipJointX = m.hipJointX;
 
   // Arms hang out and very slightly forward; the forearm straightens a touch
-  // and pre-bends at the elbow so IK has a plane to solve in.
-  const ua = A_POSE_ABDUCTION;
-  const fa = A_POSE_FOREARM_ABDUCTION;
+  // and pre-bends at the elbow so IK has a plane to solve in. The spread is
+  // per-fighter and solved in `rigMetrics` — see A_POSE_ABDUCTION_MIN.
+  const ua = m.armSpread;
+  const fa = m.foreSpread;
   const upperDir = V(Math.sin(ua), -Math.cos(ua), 0.02);
   const foreDir = V(Math.sin(fa), -Math.cos(fa) * Math.cos(ELBOW_PREBEND), Math.sin(ELBOW_PREBEND));
 
@@ -225,8 +321,8 @@ export function restJoints(m: RigMetrics): JointMap {
   // the hips and the ankles inside the knees, which also stops the thighs from
   // reading as two parallel columns.
   const kneeY = m.ankleY + (m.legLen - m.ankleY) * (0.465 + 0.01 * m.fem);
-  const kneeX = hipJointX * 0.86;
-  const ankleX = hipJointX * 0.78;
+  const kneeX = hipJointX * 0.88;
+  const ankleX = m.ankleX;
   const kneeZ = Math.sin(KNEE_PREBEND) * (m.legLen - m.ankleY) * 0.5;
 
   const j: Partial<JointMap> = {
@@ -241,8 +337,10 @@ export function restJoints(m: RigMetrics): JointMap {
     shinL: V(kneeX, kneeY, kneeZ),
     footL: V(ankleX, m.ankleY, -H * 0.014),
     // The toe joint is the ball of the foot, not the toe tip: it is the hinge a
-    // fighter pivots and pushes off on.
-    toeL: V(ankleX + H * 0.006, m.ankleY * 0.34, m.footLen * 0.32),
+    // fighter pivots and pushes off on. The ankle stands about a quarter of the
+    // way along the foot from the heel, so the ball is at 0.45 of the length
+    // ahead of it and the toes carry the last 0.185.
+    toeL: V(ankleX + H * 0.005, m.ankleY * 0.36, -H * 0.014 + m.footLen * 0.45),
 
     shoulderL: V(clavX, shoulderY + H * 0.014, H * 0.012),
     upperArmL: V(armJointX, shoulderY, 0),

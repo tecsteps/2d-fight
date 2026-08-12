@@ -38,10 +38,23 @@ export interface Palette {
 
 export type Archetype = 'grappler' | 'rushdown' | 'striker' | 'shoto';
 
+/**
+ * A fighter's body type.
+ *
+ * These six-plus numbers are the entire silhouette. Reviews 001 and 002 both
+ * found the roster reading as "one body, four albedos" — mean pairwise
+ * silhouette IoU 0.85, total width/height spread under 10% — because the
+ * authored spread here was a few percent and the mesh then damped what little
+ * there was. So the ranges below are deliberately wide: `build` runs 0.32 to
+ * 0.97 across four fighters, not 0.55 to 0.82, and height runs 1.66 to 1.90.
+ *
+ * Measure any change with `tools/critic/silhouette.py` against a matte capture.
+ * The bar is mean pairwise IoU < 0.72 and torso aspect spread > 18%.
+ */
 export interface Proportions {
   /** Total height in world units (metres). */
   height: number;
-  /** Shoulder width relative to height. */
+  /** Outer-deltoid silhouette width relative to height. */
   shoulder: number;
   /** Hip width relative to height. */
   hip: number;
@@ -51,6 +64,18 @@ export interface Proportions {
   legRatio: number;
   /** Head size as a fraction of height — lower = more heroic/stylised. */
   headRatio: number;
+  /**
+   * Female silhouette, 0..1: chest mass, waist taper, shoulder/hip balance.
+   *
+   * Authored rather than inferred from `hip / shoulder`, which is how it used
+   * to be derived. That inference breaks the moment `shoulder` is allowed to
+   * carry build: Vera is a heavy catch wrestler, so widening her shoulders to
+   * the width her design shows dropped the inferred value to ~0.09 and rebuilt
+   * her as a man. Width and sex are two axes and the mesh needs both.
+   */
+  fem: number;
+  /** Whole arm (shoulder to wrist) as a fraction of height. */
+  armRatio: number;
 }
 
 export interface FighterDef {
@@ -99,13 +124,20 @@ export const VERA: FighterDef = {
     energy: 0xff8a3c,
     rim: 0xffc98a,
   },
+  // The roster's powerhouse, and she has to win the silhouette on width alone:
+  // widest shoulders, widest hips, thickest limbs, shortest legs for her height
+  // and the largest head ratio, so she reads stacked and low rather than merely
+  // large. Reference `vera/01-neutral-front.jpg` — deltoid to deltoid is close
+  // to a third of her height and her thighs are as wide as her waist.
   proportions: {
-    height: 1.74,
-    shoulder: 0.255,
-    hip: 0.205,
-    build: 0.82,
-    legRatio: 0.49,
-    headRatio: 0.125,
+    height: 1.76,
+    shoulder: 0.318,
+    hip: 0.243,
+    build: 0.97,
+    legRatio: 0.468,
+    headRatio: 0.132,
+    fem: 0.85,
+    armRatio: 0.32,
   },
   health: 1150,
   walkFwd: 0.0295,
@@ -137,13 +169,19 @@ export const DAVI: FighterDef = {
     energy: 0x4ec3ff,
     rim: 0xffd98a,
   },
+  // The opposite pole: tallest, leanest, longest-limbed, smallest head ratio.
+  // Capoeira lives in the legs, so the leg fraction is pushed past everyone
+  // else's and the torso is correspondingly short — which is most of why he
+  // reads as a different animal to Vera even before width is considered.
   proportions: {
-    height: 1.83,
-    shoulder: 0.238,
-    hip: 0.178,
-    build: 0.55,
-    legRatio: 0.535,
-    headRatio: 0.118,
+    height: 1.9,
+    shoulder: 0.224,
+    hip: 0.167,
+    build: 0.32,
+    legRatio: 0.552,
+    headRatio: 0.112,
+    fem: 0,
+    armRatio: 0.352,
   },
   health: 980,
   walkFwd: 0.0345,
@@ -175,13 +213,18 @@ export const MALI: FighterDef = {
     energy: 0xff4a2e,
     rim: 0xffb26a,
   },
+  // Compact and athletic: the shortest fighter, but proportionally the widest
+  // through the shoulders after Vera and with the longest legs after Davi. She
+  // is small without being slight — the read a Muay Thai fighter needs.
   proportions: {
-    height: 1.71,
-    shoulder: 0.228,
-    hip: 0.19,
+    height: 1.66,
+    shoulder: 0.262,
+    hip: 0.216,
     build: 0.62,
-    legRatio: 0.515,
-    headRatio: 0.12,
+    legRatio: 0.528,
+    headRatio: 0.129,
+    fem: 1,
+    armRatio: 0.33,
   },
   health: 1000,
   walkFwd: 0.0315,
@@ -213,13 +256,19 @@ export const KAI: FighterDef = {
     energy: 0x5cc8ff,
     rim: 0xa8d8ff,
   },
+  // The baseline every other fighter is read against: middle height, middle
+  // build, middle limb length. He is the only one whose numbers are allowed to
+  // be unremarkable, and he earns his place by being the reference the other
+  // three deviate from.
   proportions: {
-    height: 1.78,
-    shoulder: 0.242,
+    height: 1.79,
+    shoulder: 0.25,
     hip: 0.185,
-    build: 0.63,
-    legRatio: 0.515,
-    headRatio: 0.12,
+    build: 0.56,
+    legRatio: 0.512,
+    headRatio: 0.121,
+    fem: 0.06,
+    armRatio: 0.334,
   },
   health: 1020,
   walkFwd: 0.032,
