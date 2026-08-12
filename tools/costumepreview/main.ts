@@ -27,10 +27,16 @@ renderer.background.add(stage.background);
 renderer.world.add(stage.world);
 
 const def = fighterById(id);
-const rig = buildCharacter(def);
+// Built undressed and dressed explicitly, so this harness still exercises
+// `buildCostume` directly even when `buildCharacter` stops calling it.
+const t0 = performance.now();
+const rig = buildCharacter(def, { costume: false });
+const tBody = performance.now() - t0;
 rig.resetPose();
 rig.applyPose(NEUTRAL_STANCE);
+const t1 = performance.now();
 const costume = buildCostume(rig, def);
+const tCostume = performance.now() - t1;
 renderer.world.add(rig.root);
 
 const YAW: Record<string, number> = { front: 0, three: 0.42, side: Math.PI / 2, back: Math.PI, closeup: 0.42 };
@@ -53,7 +59,7 @@ post.setSize(width, height);
 interface Harness {
   ready: boolean;
   seek(frame: number): void;
-  stats: { triangles: number; pieces: number };
+  stats: { triangles: number; pieces: number; bodyMs: number; costumeMs: number };
   /** Rest-space extents per piece: the fastest way to catch a runaway ray trace. */
   boxes: { name: string; x: number; y: number; z: number; cx: number; cy: number }[];
 }
@@ -62,7 +68,12 @@ const harness: Harness = {
   seek() {
     post.render(1 / 60);
   },
-  stats: { triangles: costume.triangles, pieces: costume.meshes.length },
+  stats: {
+    triangles: costume.triangles,
+    pieces: costume.meshes.length,
+    bodyMs: Math.round(tBody),
+    costumeMs: Math.round(tCostume),
+  },
   boxes: costume.meshes.map((mesh) => {
     mesh.geometry.computeBoundingBox();
     const b = mesh.geometry.boundingBox!;

@@ -10,6 +10,7 @@ import {
   buildBand,
   buildShell,
   byAngle,
+  mergeGeometry,
   chainAxis,
   CLOTH,
   edgeAtHeight,
@@ -21,7 +22,6 @@ import {
   sliceBoundary,
   surfaceCurve,
   torsoAxis,
-  torsoEnvelope,
   type Boundary,
   type BuiltCostume,
   type GarmentBody,
@@ -81,7 +81,6 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
   const tex = fighterTextures(def);
   const p = def.palette;
   const out = emptyCostume();
-  const env = torsoEnvelope(m);
 
   const Y = (l: Parameters<typeof landmarkY>[1]) => landmarkY(m, l);
   const armpit = Y('armpit');
@@ -92,17 +91,17 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
   // hip so the gi can sit over it, ballooning through the thigh and past the
   // knee, then cinched hard into the cuff. That balloon-then-cinch is what
   // breaks the silhouette at the knee in the reference.
-  const pantHemY = Y('knee') - (Y('knee') - Y('ankle')) * 0.34;
+  const pantHemY = Y('knee') - (Y('knee') - Y('ankle')) * 0.21;
   const pantWaistY = Y('hip') + m.torsoLen * 0.2;
   // Authored against world height, not the axis parameter, so the balloon lands
   // on the knee rather than wherever a proportion change moved that parameter to.
   const pantOffset = ramp([
     [pantWaistY, 0.006],
     [Y('hip') - 0.02, 0.010],
-    [Y('midThigh'), 0.017],
-    [Y('knee') + 0.055, 0.024],
-    [Y('knee'), 0.032],
-    [Y('knee') - 0.045, 0.038],
+    [Y('midThigh'), 0.014],
+    [Y('knee') + 0.055, 0.022],
+    [Y('knee'), 0.029],
+    [Y('knee') - 0.045, 0.033],
     [pantHemY + 0.030, 0.019],
     [pantHemY, 0.013],
   ]);
@@ -137,28 +136,29 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       // inflate into each other and the pair reads as one skirt.
       offset: (s, _u, angle) => {
         const inward = Math.max(0, -Math.cos(angle - inner));
-        return pantOffset(axis.pointAt(s).y) * (1 - 0.55 * inward ** 1.4) + bias;
+        return pantOffset(axis.pointAt(s).y) * (1 - 0.72 * inward ** 1.3) + bias;
       },
       cloth: CLOTH * 1.15,
-      segments: 30,
-      radial: 44,
-      lining: 4,
+      segments: 24,
+      radial: 38,
+      lining: 3,
       // The waist end is raw on purpose: it lives under the gi skirt, and a hem
       // there would be a bead pushing through the layer above it.
       fromEdge: undefined,
-      toEdge: { fold: 0.026, roll: 0.0075, rings: 4 },
-      drape: { folds: 7, amplitude: 0.0055, along: 2.4, seed: 11 + (side === 'R' ? 5 : 0), sag: 0.004 },
-      keepSide: { normal: new THREE.Vector3(sign, 0, 0), d: -0.0015 },
+      toEdge: { fold: 0.015, roll: 0.0065, rings: 4 },
+      drape: { folds: 8, amplitude: 0.0080, along: 3.0, seed: 11 + (side === 'R' ? 5 : 0), sag: 0.005 },
+      keepSide: { normal: new THREE.Vector3(sign, 0, 0), d: -0.004, softness: 0.008 },
       tileMetres: tex.garments.pants.tileMetres,
     });
     attachGarment(rig, {
       name: `pant${side}`,
       geometry: shell.geometry,
       kind: 'cloth',
-      color: p.secondary,
-      // The authored charcoal is a flat swatch; under a cel ramp its shadow band
-      // would go to near-black and take the leg's whole form with it.
-      shadowColor: 0x23252c,
+      // The authored charcoal is the ink value from the design sheet. Under a
+      // four-band ramp it lands within a hair of the navy gi and the two garments
+      // merge into one dark mass, so both ends of the ramp are lifted here.
+      color: 0x3e414a,
+      shadowColor: 0x252831,
       tex: tex.garments.pants,
       normalScale: 0.8,
       specular: 0.12,
@@ -178,9 +178,16 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
   // the shoulder rides over the deltoid and reads as a cap sleeve. The armhole
   // is *this* transition, not a notch cut in the top edge — the top edge stays
   // up on the shoulder all the way round, exactly as in the reference.
+  const giSlack = ramp([
+    [giHemY, LAYER.mid + 0.011],
+    [Y('hip') + 0.05, LAYER.mid + 0.007],
+    [Y('waist'), LAYER.mid + 0.001],
+    [Y('chest'), LAYER.mid],
+  ]);
+
   const giBridge = (s: number): number => {
     const y = giAxis.pointAt(s).y;
-    return 0.14 * THREE.MathUtils.smoothstep(y, armpit + 0.045, armpit + 0.105);
+    return 0.15 * THREE.MathUtils.smoothstep(y, armpit + 0.062, armpit + 0.158);
   };
 
   // Two panels cross at the front. This is the *over* panel, which carries the
@@ -190,26 +197,33 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
   // shoulder there. The near-vertical step at +100 deg is where the panel ends
   // and the under panel takes over — it sits in the left armpit, behind the arm.
   const giTop = edgeAtHeight(giAxis, [
-    [180, neck + 0.012],
-    [150, neck + 0.010],
-    [124, neck + 0.007],
-    [106, neck + 0.003],
-    [92, neck - 0.004],
+    // Over the shoulders the edge has to be carried *past* the crest of the
+    // shoulder mass, not stopped at its side. A radial sweep from a vertical
+    // axis is nearly tangent to the top of a shoulder, so an edge authored at
+    // shoulder height lands out on the deltoid and the gi reads as off-the-
+    // shoulder; five centimetres higher and the same rings wrap over the trap
+    // and close on the neck, which is where a collar belongs.
+    [180, neck + 0.068],
+    [150, neck + 0.062],
+    [124, neck + 0.055],
+    [104, neck + 0.048],
+    [96, neck + 0.040],
     // The step: forward of here the over panel's free edge takes over, and the
     // under panel is what covers the character's left shoulder.
-    [84, obiTop + 0.030],
+    [88, obiTop + 0.028],
     [76, obiTop + 0.036],
     [58, obiTop + 0.082],
     [38, obiTop + 0.152],
-    [18, obiTop + 0.218],
-    [0, neck - 0.098],
-    [-16, neck - 0.072],
-    [-34, neck - 0.034],
-    [-52, neck + 0.004],
-    [-72, neck + 0.007],
-    [-96, neck + 0.001],
-    [-124, neck + 0.007],
-    [-152, neck + 0.010],
+    [18, obiTop + 0.236],
+    [0, neck - 0.080],
+    [-16, neck - 0.046],
+    [-32, neck + 0.002],
+    [-46, neck + 0.026],
+    [-62, neck + 0.044],
+    [-82, neck + 0.048],
+    [-104, neck + 0.050],
+    [-130, neck + 0.058],
+    [-155, neck + 0.065],
   ]);
   // Side vents: the hem lifts a little at the hips, the way a gi skirt is slit.
   const giHem = byAngle([
@@ -229,16 +243,18 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
     axis: giAxis,
     from: (_u, a) => giAxis.sAtY(giHem(a)),
     to: giTop,
-    offset: LAYER.mid,
+    // Slack grows toward the hem: a gi skirt hangs off the hip, and a constant
+    // offset makes the whole top read as one clinging piece.
+    offset: (sp) => giSlack(giAxis.pointAt(sp).y),
     cloth: CLOTH,
-    segments: 30,
-    radial: 76,
-    lining: 5,
+    segments: 26,
+    radial: 68,
+    lining: 4,
     follow: GI_FOLLOW,
     bridge: giBridge,
     fromEdge: { fold: 0.018, roll: 0.005, rings: 3 },
     toEdge: { fold: 0.013, roll: 0.0042, rings: 3 },
-    drape: { folds: 6, amplitude: 0.0035, along: 1.8, seed: 3, sag: 0.003 },
+    drape: { folds: 7, amplitude: 0.0058, along: 2.6, seed: 3, sag: 0.004 },
     tileMetres: tex.garments.gi.tileMetres,
   });
   attachGarment(rig, {
@@ -257,23 +273,24 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
   // hidden, so only the far side of the V is ever seen. Its bottom edge is
   // deliberately unfinished and parked well below the over panel's edge.
   const underTop = edgeAtHeight(giAxis, [
-    [4, neck - 0.092],
-    [20, neck - 0.070],
-    [40, neck - 0.028],
-    [60, neck + 0.002],
-    [82, neck - 0.004],
-    [104, neck + 0.003],
-    [128, neck + 0.007],
+    [4, neck - 0.074],
+    [20, neck - 0.044],
+    [40, neck - 0.004],
+    [56, neck + 0.026],
+    [72, neck + 0.042],
+    [92, neck + 0.044],
+    [112, neck + 0.052],
+    [132, neck + 0.058],
   ]);
   const under = buildShell(body, {
     axis: giAxis,
     from: giAxis.sAtY(obiTop - 0.05),
     to: underTop,
     offset: LAYER.mid - 0.0024,
-    segments: 10,
+    segments: 12,
     radial: 30,
     lining: 3,
-    arc: [4 * DEG, 128 * DEG],
+    arc: [4 * DEG, 132 * DEG],
     closed: false,
     follow: GI_FOLLOW,
     bridge: giBridge,
@@ -294,26 +311,31 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
   // Collar band. Swept along the shells' own finished boundaries, so it cannot
   // drift off the edge it is trimming — the reason `buildShell` hands its
   // boundaries back at all.
-  const collar = (curve: Boundary, name: string, width: number) => {
+  const collarParts: THREE.BufferGeometry[] = [];
+  const collar = (curve: Boundary, width: number) => {
     if (curve.points.length < 3) return;
-    attachGarment(rig, {
-      name,
-      geometry: buildBand(curve, {
+    collarParts.push(
+      buildBand(curve, {
         width,
         thickness: CLOTH * 1.1,
         lift: -CLOTH * 0.3,
         sides: 10,
         tileMetres: tex.garments.obi.tileMetres,
       }),
-      kind: 'cloth',
-      color: p.accent,
-      tex: tex.garments.obi,
-      specular: 0.35,
-    }, out);
+    );
   };
-  collar(sliceBoundary(gi.to, -100, 84), 'giLapel', 0.023);
-  collar(sliceBoundary(gi.to, 96, 264), 'giCollarBack', 0.017);
-  collar(sliceBoundary(under.to, 6, 88), 'giUnderLapel', 0.021);
+  collar(sliceBoundary(gi.to, -140, 86), 0.022);
+  collar(sliceBoundary(gi.to, 98, 222), 0.017);
+  collar(sliceBoundary(under.to, 6, 100), 0.021);
+  attachGarment(rig, {
+    name: 'giCollar',
+    geometry: mergeGeometry(collarParts),
+    kind: 'cloth',
+    color: p.accent,
+    shadowColor: 0x7c3210,
+    tex: tex.garments.obi,
+    specular: 0.35,
+  }, out);
 
   // -------------------------------------------------------------------- obi --
   // Wrapped twice: two shells, the upper one riding a little higher on the
@@ -324,18 +346,31 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
   const obiMidY = Y('hip') + m.torsoLen * 0.285;
   const obiTopY = obiTop;
 
-  const obiWraps: { name: string; from: (a: number) => number; to: (a: number) => number; offset: number }[] = [
+  // Each pass gets a bead only on the edge you can actually see. The lower
+  // wrap's top edge runs underneath the upper wrap, and a hem bead there swells
+  // straight into the layer above it — which is what a dark pinch at a belt
+  // overlap always turns out to be.
+  interface ObiWrap {
+    name: string;
+    from: (a: number) => number;
+    to: (a: number) => number;
+    offset: number;
+    hemTop: boolean;
+  }
+  const obiWraps: ObiWrap[] = [
     {
       name: 'obiLower',
       from: byAngle([[0, obiLowY], [90, obiLowY + 0.006], [180, obiLowY + 0.012], [-90, obiLowY + 0.004]]),
-      to: byAngle([[0, obiMidY + 0.004], [90, obiMidY], [180, obiMidY - 0.006], [-90, obiMidY + 0.002]]),
+      to: byAngle([[0, obiMidY + 0.006], [90, obiMidY + 0.002], [180, obiMidY - 0.004], [-90, obiMidY + 0.004]]),
       offset: LAYER.belt,
+      hemTop: false,
     },
     {
       name: 'obiUpper',
       from: byAngle([[0, obiMidY - 0.004], [90, obiMidY - 0.008], [180, obiMidY - 0.014], [-90, obiMidY - 0.006]]),
       to: byAngle([[0, obiTopY], [90, obiTopY + 0.008], [180, obiTopY - 0.004], [-90, obiTopY + 0.002]]),
       offset: over(LAYER.belt),
+      hemTop: true,
     },
   ];
   for (const w of obiWraps) {
@@ -345,12 +380,12 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       to: (_u, a) => obiAxis.sAtY(w.to(a)),
       offset: w.offset,
       cloth: CLOTH * 1.3,
-      segments: 12,
-      radial: 60,
+      segments: 10,
+      radial: 52,
       lining: 3,
       follow: TORSO,
       fromEdge: { fold: 0.012, roll: 0.0055, rings: 3 },
-      toEdge: { fold: 0.012, roll: 0.0055, rings: 3 },
+      toEdge: w.hemTop ? { fold: 0.012, roll: 0.0055, rings: 3 } : undefined,
       drape: { folds: 9, amplitude: 0.0022, along: 1.2, seed: 7 },
       tileMetres: tex.garments.obi.tileMetres,
     });
@@ -383,7 +418,13 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
   const knotN = knotAnchor.normals[1];
   const knotSide = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), knotN).normalize();
 
-  const loop = (radiusX: number, radiusY: number, roll: number, width: number, name: string) => {
+  // Knot, cinch and both loose ends are one mesh rigid-bound to the hips. They
+  // have left the body surface, so the field weighting that is right for cloth
+  // lying on a limb would bind the tails to the thigh they happen to hang in
+  // front of and swing them with a step.
+  const knotParts: THREE.BufferGeometry[] = [];
+
+  const loop = (radiusX: number, radiusY: number, roll: number, width: number) => {
     const pts: THREE.Vector3[] = [];
     const nrm: THREE.Vector3[] = [];
     const n = 22;
@@ -398,28 +439,22 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       );
       nrm.push(knotN.clone());
     }
-    attachGarment(rig, {
-      name,
-      geometry: buildBand({ points: pts, normals: nrm, u: pts.map((_, i) => i / n), angle: pts.map(() => 0) }, {
+    knotParts.push(
+      buildBand({ points: pts, normals: nrm, u: pts.map((_, i) => i / n), angle: pts.map(() => 0) }, {
         width,
         thickness: CLOTH * 1.4,
         closed: true,
         sides: 8,
         tileMetres: tex.garments.obi.tileMetres,
       }),
-      kind: 'cloth',
-      color: p.accent,
-      tex: tex.garments.obi,
-      bind: 'hips',
-      specular: 0.32,
-    }, out);
+    );
   };
-  loop(0.030, 0.019, 0.005, 0.025, 'obiKnot');
-  loop(0.011, 0.024, 0.008, 0.017, 'obiCinch');
+  loop(0.031, 0.021, 0.010, 0.030);
+  loop(0.012, 0.027, 0.009, 0.019);
 
   // Two loose ends, relaxed under gravity against the hip. Different lengths,
-  // opposite lateral bias and different flutter phase, because two tails baked
-  // from the same parameters hang as mirror images and the eye catches it.
+  // different lateral bias and a different flutter phase, because two tails
+  // baked from the same parameters hang as mirror images and the eye catches it.
   const tails: { len: number; bias: number; width: number; seed: number; flutter: number }[] = [
     { len: 0.315, bias: 0.28, width: 0.070, seed: 21, flutter: 0.028 },
     { len: 0.195, bias: 0.85, width: 0.058, seed: 34, flutter: 0.018 },
@@ -433,19 +468,18 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       .addScaledVector(knotN, -0.004);
     const path = bakeStrand(body, {
       from: start,
-      dir: new THREE.Vector3(t.bias * 0.22, -1, 0.34).normalize(),
+      dir: new THREE.Vector3(t.bias * 0.2, -1, 0.14).normalize(),
       length: t.len,
       segments: 16,
       stiffness: 0.42,
-      bias: new THREE.Vector3(t.bias * 0.35, 0, 0.12),
+      bias: new THREE.Vector3(t.bias * 0.3, 0, 0.02),
       flutter: t.flutter,
       waves: 1.25,
-      clearance: over(LAYER.belt, 2),
+      clearance: 0.019,
       seed: t.seed,
     });
-    attachGarment(rig, {
-      name: `obiTail${i}`,
-      geometry: buildBand(path, {
+    knotParts.push(
+      buildBand(path, {
         // Tapered, and the taper is what makes it read as a cut end rather than
         // a strap: the tip is narrower and thinner than the root.
         width: (u) => t.width * (1 - 0.22 * u),
@@ -454,13 +488,18 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
         twist: (i === 0 ? 1 : -1) * 0.55,
         tileMetres: tex.garments.obi.tileMetres,
       }),
-      kind: 'cloth',
-      color: p.accent,
-      tex: tex.garments.obi,
-      bind: 'hips',
-      specular: 0.32,
-    }, out);
+    );
   }
+  attachGarment(rig, {
+    name: 'obiKnot',
+    geometry: mergeGeometry(knotParts),
+    kind: 'cloth',
+    color: p.accent,
+    shadowColor: 0x7c3210,
+    tex: tex.garments.obi,
+    bind: 'hips',
+    specular: 0.32,
+  }, out);
 
   // -------------------------------------------------------------- hand wraps --
   for (const side of ['L', 'R'] as const) {
@@ -471,8 +510,8 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       to: 0.93,
       offset: ramp([[0, LAYER.skin], [0.4, LAYER.skin + 0.0018], [1, LAYER.skin]]),
       cloth: 0.0032,
-      segments: 16,
-      radial: 32,
+      segments: 13,
+      radial: 28,
       lining: 3,
       follow: armOf(side),
       fromEdge: { fold: 0.010, roll: 0.0038, rings: 3 },
@@ -480,33 +519,28 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       drape: { folds: 4, amplitude: 0.0009, along: 3.5, seed: 41 },
       tileMetres: tex.wrap.tileMetres,
     });
-    attachGarment(rig, {
-      name: `handWrap${side}`,
-      geometry: shell.geometry,
-      kind: 'wrap',
-      color: p.wrap,
-      tex: tex.wrap,
-      normalScale: 1.2,
-    }, out);
-
-    // The extra turn at the wrist. One band is all it takes for the wrap to
-    // stop looking like a white sock.
+    // The extra turn at the wrist. One band is all it takes for the wrap to stop
+    // looking like a white sock.
     const wristRing = surfaceCurve(body, {
       axis,
       samples: 34,
       s: (t) => 0.6 + Math.sin(t * Math.PI * 2) * 0.012,
       angle: (t) => t * Math.PI * 2,
       offset: LAYER.skin + 0.0032,
+      follow: armOf(side),
     });
     attachGarment(rig, {
-      name: `wristWrap${side}`,
-      geometry: buildBand(wristRing, {
-        width: 0.019,
-        thickness: 0.0032,
-        closed: true,
-        sides: 8,
-        tileMetres: tex.wrap.tileMetres,
-      }),
+      name: `handWrap${side}`,
+      geometry: mergeGeometry([
+        shell.geometry,
+        buildBand(wristRing, {
+          width: 0.019,
+          thickness: 0.0032,
+          closed: true,
+          sides: 8,
+          tileMetres: tex.wrap.tileMetres,
+        }),
+      ]),
       kind: 'wrap',
       color: p.wrap,
       tex: tex.wrap,
@@ -524,6 +558,10 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
     const highY = m.ankleY + 0.175;
     const s0 = axis.sAtY(lowY);
     const s1 = axis.sAtY(highY);
+    // Rigid to the shin: the whole cluster sits between the ankle and the calf,
+    // and one bone's worth of motion is the truth for it. That also skips the
+    // field-weight diffusion, which is the expensive half of a costume build.
+    const parts: THREE.BufferGeometry[] = [];
     for (const hand of [1, -1]) {
       const spiral = surfaceCurve(body, {
         axis,
@@ -531,20 +569,9 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
         s: (t) => THREE.MathUtils.lerp(s0, s1, t),
         angle: (t) => FRONT + hand * (t * 1.55 * Math.PI * 2 - 0.5),
         offset: LAYER.skin + 0.0015,
+        follow: shinOf(side),
       });
-      attachGarment(rig, {
-        name: `ankleWrap${side}${hand > 0 ? 'A' : 'B'}`,
-        geometry: buildBand(spiral, {
-          width: 0.0135,
-          thickness: 0.0038,
-          sides: 8,
-          tileMetres: tex.garments.obi.tileMetres,
-        }),
-        kind: 'cloth',
-        color: p.accent,
-        tex: tex.garments.obi,
-        specular: 0.3,
-      }, out);
+      parts.push(buildBand(spiral, { width: 0.0135, thickness: 0.0038, sides: 8, tileMetres: tex.garments.obi.tileMetres }));
     }
     const topRing = surfaceCurve(body, {
       axis,
@@ -552,19 +579,17 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       s: () => s1,
       angle: (t) => t * Math.PI * 2,
       offset: LAYER.skin + 0.0022,
+      follow: shinOf(side),
     });
+    parts.push(buildBand(topRing, { width: 0.017, thickness: 0.004, closed: true, sides: 8, tileMetres: tex.garments.obi.tileMetres }));
     attachGarment(rig, {
-      name: `ankleBand${side}`,
-      geometry: buildBand(topRing, {
-        width: 0.017,
-        thickness: 0.004,
-        closed: true,
-        sides: 8,
-        tileMetres: tex.garments.obi.tileMetres,
-      }),
+      name: `ankleWrap${side}`,
+      geometry: mergeGeometry(parts),
       kind: 'cloth',
       color: p.accent,
+      shadowColor: 0x7c3210,
       tex: tex.garments.obi,
+      bind: `shin${side}` as BoneName,
       specular: 0.3,
     }, out);
   }
@@ -614,49 +639,38 @@ function buildShoes(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
       to: 0.965,
       offset: ramp([[0, 0.008], [0.25, 0.007], [0.75, 0.0065], [1, 0.006]]),
       cloth: 0.0045,
-      segments: 22,
-      radial: 40,
-      lining: 4,
+      segments: 18,
+      radial: 32,
+      lining: 3,
       front: UP,
       left: LEFT,
       // Without this the upward ray from the heel never leaves the body: the
       // ankle runs straight into the shin, and the shoe grows up the leg.
       follow: footOf(side),
       // Below the sole line the white midsole takes over, so the navy stops there.
-      keepSide: { normal: UP, d: 0.0155 },
+      keepSide: { normal: UP, d: 0.0235, softness: 0.004 },
       fromEdge: { fold: 0.008, roll: 0.004, rings: 3 },
       toEdge: { fold: 0.008, roll: 0.004, rings: 3 },
       drape: { folds: 5, amplitude: 0.0012, along: 2, seed: 61 },
       tileMetres: tex.boots?.tileMetres ?? 0.2,
     });
-    attachGarment(rig, {
-      name: `shoe${side}`,
-      geometry: upper.geometry,
-      kind: 'leather',
-      color: p.boots,
-      shadowColor: 0x141f33,
-      tex: tex.boots,
-      normalScale: 0.7,
-      specular: 0.4,
-    }, out);
-
     // Midsole: the lower arc of the same foot, one layer further out and pressed
     // flat onto the ground plane.
     const sole = buildShell(body, {
       axis,
       from: 0.015,
       to: 0.98,
-      offset: 0.0125,
+      offset: 0.0135,
       cloth: 0.005,
-      segments: 22,
-      radial: 30,
+      segments: 18,
+      radial: 26,
       lining: 3,
-      arc: [112 * Math.PI / 180, 248 * Math.PI / 180],
+      arc: [94 * Math.PI / 180, 266 * Math.PI / 180],
       closed: false,
       front: UP,
       left: LEFT,
       follow: footOf(side),
-      keepSide: { normal: UP, d: 0.0006 },
+      keepSide: { normal: UP, d: 0.0016, softness: 0.003 },
       fromEdge: { fold: 0.008, roll: 0.0045, rings: 3 },
       toEdge: { fold: 0.008, roll: 0.0045, rings: 3 },
       tileMetres: 0.2,
@@ -669,10 +683,11 @@ function buildShoes(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
       shadowColor: 0xa89a86,
       specular: 0.25,
       outlineWidth: 0.85,
+      bind: `foot${side}` as BoneName,
     }, out);
 
-    // Ankle collar, on the shin rather than the foot: a low-top's cuff rises
-    // past the ankle bone and no ray from a horizontal foot axis reaches it.
+    // Ankle collar, on the shin rather than the foot: a low-top's cuff rises past
+    // the ankle bone and no ray from a horizontal foot axis reaches it.
     const shinAxis = chainAxis(body, [`shin${side}`, `foot${side}`] as BoneName[], 0);
     const collar = buildShell(body, {
       axis: shinAxis,
@@ -687,42 +702,38 @@ function buildShoes(rig: BuiltCharacter, def: FighterDef, out: BuiltCostume): vo
       fromEdge: { fold: 0.009, roll: 0.0045, rings: 3 },
       tileMetres: tex.boots?.tileMetres ?? 0.2,
     });
+
+    // Two straps over the instep. Each is a curve at a fixed station sweeping over
+    // the top of the foot, which is the cheapest detail per pixel in the outfit.
+    const straps = [0.40, 0.55].map((station) =>
+      buildBand(
+        surfaceCurve(body, {
+          axis,
+          samples: 26,
+          s: () => station,
+          angle: (t) => (-115 + t * 230) * Math.PI / 180,
+          offset: 0.0145,
+          front: UP,
+          left: LEFT,
+          follow: footOf(side),
+        }),
+        { width: 0.0135, thickness: 0.004, sides: 8, tileMetres: tex.boots?.tileMetres ?? 0.2 },
+      ),
+    );
+
+    // Upper, cuff and straps are one rigid-bound mesh. A shoe is a single solid
+    // object that goes where the foot goes; nothing about it wants the body's
+    // per-vertex weighting, and skipping it saves most of the build cost here.
     attachGarment(rig, {
-      name: `shoeCollar${side}`,
-      geometry: collar.geometry,
+      name: `shoe${side}`,
+      geometry: mergeGeometry([upper.geometry, collar.geometry, ...straps]),
       kind: 'leather',
       color: p.boots,
+      shadowColor: 0x141f33,
       tex: tex.boots,
       normalScale: 0.7,
       specular: 0.4,
+      bind: `foot${side}` as BoneName,
     }, out);
-
-    // Two straps over the instep. Each is a curve at fixed station sweeping over
-    // the top of the foot, which is the cheapest detail per pixel in the outfit.
-    for (const [i, station] of [0.40, 0.55].entries()) {
-      const strap = surfaceCurve(body, {
-        axis,
-        samples: 26,
-        s: () => station,
-        angle: (t) => (-115 + t * 230) * Math.PI / 180,
-        offset: 0.0145,
-        front: UP,
-        left: LEFT,
-        follow: footOf(side),
-      });
-      attachGarment(rig, {
-        name: `shoeStrap${side}${i}`,
-        geometry: buildBand(strap, {
-          width: 0.0135,
-          thickness: 0.004,
-          sides: 8,
-          tileMetres: tex.boots?.tileMetres ?? 0.2,
-        }),
-        kind: 'leather',
-        color: p.boots,
-        tex: tex.boots,
-        specular: 0.45,
-      }, out);
-    }
   }
 }

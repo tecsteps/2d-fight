@@ -28,7 +28,7 @@ const server = await createServer({
 await server.listen();
 
 const q = new URLSearchParams();
-for (const k of ['fighter', 'view', 'yaw', 'pose', 'post']) if (args[k]) q.set(k, args[k]);
+for (const k of ['fighter', 'view', 'yaw', 'pose', 'post', 'headyaw', 'late']) if (args[k]) q.set(k, args[k]);
 const url = `http://127.0.0.1:5207/tools/hairpreview/index.html?${q}`;
 
 const CHROME = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';

@@ -18,6 +18,7 @@ import {
   type BodyMeshOptions,
   type BodyPlan,
 } from './body';
+import { buildCostume } from './costume';
 
 /**
  * Assembles a fighter: skeleton, skinned body, NPR materials, ink.
@@ -30,6 +31,8 @@ import {
 export interface BuildCharacterOptions extends BodyMeshOptions {
   /** Build the inverted-hull ink shells. Off for previews that only want form. */
   outlines?: boolean;
+  /** Dress the fighter. Off for anatomy checks and for costume authoring itself. */
+  costume?: boolean;
 }
 
 export interface BuiltCharacter extends CharacterRig {
@@ -131,6 +134,10 @@ export function buildCharacter(def: FighterDef, opts: BuildCharacterOptions = {}
   };
 
   if (opts.outlines !== false) rig.outlines = addOutlines(root);
+  // After the ink pass, not before: `buildCostume` re-runs `addOutlines`, which
+  // skips anything already inked, so each garment gets its own line and the body
+  // is not double-shelled.
+  if (opts.costume !== false) buildCostume(rig, def);
 
   return rig;
 }

@@ -386,7 +386,9 @@ export function traceOffset(
     r += Math.max(offset - f, minStep);
   }
   if (rOut < 0) return maxR;
-  for (let i = 0; i < 14; i++) {
+  // Ten halvings of a bracket that is at most `minStep` wide lands inside 30
+  // microns, which is two orders of magnitude finer than a cloth thickness.
+  for (let i = 0; i < 10; i++) {
     const mid = (rIn + rOut) * 0.5;
     if (sample(mid) >= offset) rOut = mid;
     else rIn = mid;
@@ -643,8 +645,16 @@ export interface ShellOptions {
   bridge?: RadialProfile;
   /** Hard ceiling on the traced radius — see `torsoEnvelope`. */
   maxRadius?: RadialProfile;
-  /** Half-space the finished cloth must stay inside, e.g. a trouser inseam. */
-  keepSide?: { normal: THREE.Vector3; d: number };
+  /**
+   * Half-space the finished cloth is pressed into: a trouser inseam, or the
+   * ground plane under a shoe.
+   *
+   * Compressed rather than projected. Projecting stacks every offending vertex
+   * onto one plane, and a row of coincident vertices has no surface normal — it
+   * renders as a torn black sliver. `softness` is the width of the squeeze, so
+   * the surface flattens against the plane and stays a surface.
+   */
+  keepSide?: { normal: THREE.Vector3; d: number; softness?: number };
   front?: THREE.Vector3;
   left?: THREE.Vector3;
   /** Metres of cloth per texture tile, so the weave lands at physical scale. */
@@ -794,8 +804,11 @@ export function buildShell(body: GarmentBody, o: ShellOptions): ShellResult {
       if (sag > 0) lift += sag * Math.max(0, -nrm.y) * nd.mix;
       vtx.copy(skin).addScaledVector(nrm, lift);
       if (o.keepSide) {
-        const excess = o.keepSide.d - vtx.dot(o.keepSide.normal);
-        if (excess > 0) vtx.addScaledVector(o.keepSide.normal, excess);
+        const k = o.keepSide.softness ?? 0.005;
+        const t = vtx.dot(o.keepSide.normal) - o.keepSide.d;
+        // Softplus: flattens toward the plane, never onto it.
+        const soft = t > 6 * k ? t : k * Math.log(1 + Math.exp(t / k));
+        vtx.addScaledVector(o.keepSide.normal, soft - t);
       }
 
       const b = (i * N + jj) * 3;
@@ -1279,6 +1292,50 @@ export function bindRigid(geometry: THREE.BufferGeometry, bone: BoneName): void 
   }
   geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
   geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+}
+
+/**
+ * Concatenates garment parts that share a material into one mesh.
+ *
+ * Worth doing for two separate reasons. Draw calls: every attached part is also
+ * an inverted-hull ink shell, so a costume of thirty pieces is sixty draws per
+ * fighter and there are two fighters. And skin weights: `computeSkinWeights`
+ * diffuses over the surface graph for fourteen passes, which is the single most
+ * expensive thing in a costume build, so a pass over one merged buffer beats six
+ * passes over six small ones.
+ *
+ * Requires the same attribute set on every part, which everything in this file
+ * produces: position, normal, uv, and an index.
+ */
+export function mergeGeometry(parts: readonly THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const live = parts.filter((g) => g.getAttribute('position')?.count);
+  if (live.length === 1) return live[0];
+  const pos: number[] = [];
+  const nrm: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  let base = 0;
+  for (const g of live) {
+    const p = g.getAttribute('position');
+    const n = g.getAttribute('normal');
+    const t = g.getAttribute('uv');
+    for (let i = 0; i < p.count; i++) {
+      pos.push(p.getX(i), p.getY(i), p.getZ(i));
+      nrm.push(n.getX(i), n.getY(i), n.getZ(i));
+      uv.push(t.getX(i), t.getY(i));
+    }
+    const ix = g.getIndex()!;
+    for (let i = 0; i < ix.count; i++) idx.push(ix.getX(i) + base);
+    base += p.count;
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  out.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  out.setIndex(idx);
+  out.computeBoundingSphere();
+  return out;
 }
 
 export interface GarmentPiece {

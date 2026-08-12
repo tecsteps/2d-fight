@@ -210,6 +210,46 @@ class Skull {
 }
 
 const _n0 = new THREE.Vector3();
+const _qa = new THREE.Quaternion();
+const _qb = new THREE.Quaternion();
+const _qs = new THREE.Quaternion();
+
+/**
+ * Points running over the skull from one direction to another.
+ *
+ * The path is the geodesic between the two directions, so a strand starting at
+ * the forehead travels over the crown while one starting at the temple travels
+ * around the side — which is what hair does, and what interpolating the two
+ * angles separately gets wrong (it walks every strand around the ear).
+ */
+function skullArc(
+  skull: Skull,
+  from: THREE.Vector3,
+  to: THREE.Vector3,
+  samples: number,
+  lift: (s: number) => number,
+): THREE.Vector3[] {
+  _qa.identity();
+  _qb.setFromUnitVectors(from, to);
+  const out: THREE.Vector3[] = [];
+  for (let i = 0; i < samples; i++) {
+    const s = i / (samples - 1);
+    _qs.slerpQuaternions(_qa, _qb, s);
+    const d = from.clone().applyQuaternion(_qs);
+    const k =
+      1 /
+      Math.sqrt((d.x / skull.r.x) ** 2 + (d.y / skull.r.y) ** 2 + (d.z / skull.r.z) ** 2);
+    const p = d.clone().multiplyScalar(k).add(skull.c);
+    // Ellipsoid normal at that point, so the lift leaves the surface squarely.
+    const nrm = new THREE.Vector3(
+      (p.x - skull.c.x) / (skull.r.x * skull.r.x),
+      (p.y - skull.c.y) / (skull.r.y * skull.r.y),
+      (p.z - skull.c.z) / (skull.r.z * skull.r.z),
+    ).normalize();
+    out.push(p.addScaledVector(nrm, lift(s)));
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Curves and sweeps
@@ -579,12 +619,12 @@ function braid(buf: Buf, frames: Frame[], spec: BraidSpec): void {
       pts.push(
         f.p
           .clone()
-          .addScaledVector(f.e1, R * 0.47 * lat)
-          .addScaledVector(f.e2, R * 0.25 * dep),
+          .addScaledVector(f.e1, R * 0.5 * lat)
+          .addScaledVector(f.e2, R * 0.24 * dep),
       );
       // A lobe swells where it is on the outside of the plait; that swelling is
       // what makes the braid bumpy in silhouette rather than a smooth cylinder.
-      rs.push(R * 0.56 * (0.88 + 0.2 * Math.abs(si)));
+      rs.push(R * 0.55 * (0.8 + 0.36 * Math.abs(si)));
     }
     const sf = buildFrames(pts, new THREE.Vector3(0, 0, 1));
     sweep(buf, sf, {
@@ -925,10 +965,11 @@ function buildMali(ctx: Ctx): void {
   const { skull, hair, tie, m, n } = ctx;
   const R = skull.R;
 
+  const edge = profile([88, 96, 110, 120, 126].map((d) => d * DEG));
   scalp(hair, skull, {
     edge: [88, 96, 110, 120, 126],
-    thickness: [R * 0.14, R * 0.15, R * 0.16, R * 0.21, R * 0.26],
-    crown: R * 0.2,
+    thickness: [R * 0.1, R * 0.11, R * 0.13, R * 0.18, R * 0.24],
+    crown: R * 0.15,
     // Pulled back: the mass grows toward the gather, and nothing stands up at
     // the crown. Sleek is the read, so the only volume is behind.
     lift: (theta, v) => R * 0.06 * smoothstep(0.3, 1, v) * clamp01(-Math.cos(theta)),
@@ -937,9 +978,32 @@ function buildMali(ctx: Ctx): void {
 
   // Gathered mass where the tail leaves the head.
   const base = skull.at(180 * DEG, 38 * DEG, R * 0.1);
-  const gatherDir = new THREE.Vector3(0, 0.72, -0.69).normalize();
+
+  // Bands of hair swept back into the tie.
+  //
+  // This is the read for pulled-back hair, and no amount of texture substitutes
+  // for it: an artist draws four or five ribbons of hair converging on the
+  // gather, and the ridges they make are what keeps the crown from being a
+  // smooth bowl. They ride slightly proud of the scalp shell.
+  const gatherDir = Skull.dir(180 * DEG, 42 * DEG);
+  for (let i = 0; i < 11; i++) {
+    const spread = ((i + 0.5) / 11) * 2 - 1;
+    const j0 = n.rand(i, 41, 6);
+    const theta = spread * 168 * DEG;
+    const rootDir = Skull.dir(theta, edge(theta) * 0.94);
+    const pts = skullArc(skull, rootDir, gatherDir, 16, (s) => R * (0.1 + 0.14 * s));
+    const frames = buildFrames(pts, new THREE.Vector3(0, 1, 0));
+    sweep(hair, frames, {
+      radius: (t) => R * (0.1 + 0.02 * j0) * (0.85 + 0.3 * Math.sin(t * Math.PI)),
+      flat: () => 0.5,
+      sides: 7,
+      tile: ctx.tile,
+      capStart: true,
+    });
+  }
+  const tailAxis = new THREE.Vector3(0, 0.72, -0.69).normalize();
   const gf = buildFrames(
-    [base.clone().addScaledVector(gatherDir, -R * 0.25), base, base.clone().addScaledVector(gatherDir, R * 0.3)],
+    [base.clone().addScaledVector(tailAxis, -R * 0.25), base, base.clone().addScaledVector(tailAxis, R * 0.3)],
     new THREE.Vector3(0, 0, 1),
   );
   sweep(hair, gf, {
@@ -951,7 +1015,7 @@ function buildMali(ctx: Ctx): void {
   });
 
   // --- The tail --------------------------------------------------------------
-  const top = base.clone().addScaledVector(gatherDir, R * 0.28);
+  const top = base.clone().addScaledVector(tailAxis, R * 0.28);
   const H = m.height;
   const pts = [
     top,
@@ -959,17 +1023,17 @@ function buildMali(ctx: Ctx): void {
     new THREE.Vector3(0, m.height * 0.965, -H * 0.072),
     new THREE.Vector3(0, m.height * 0.92, -H * 0.077),
     new THREE.Vector3(0, m.height * 0.855, -H * 0.075),
-    new THREE.Vector3(0, m.height * 0.79, -H * 0.068),
-    new THREE.Vector3(0, m.height * 0.742, -H * 0.058),
+    new THREE.Vector3(0, m.height * 0.785, -H * 0.068),
+    new THREE.Vector3(0, m.height * 0.715, -H * 0.056),
   ];
-  const frames = buildFrames(curvePoints(pts, 88), new THREE.Vector3(1, 0, 0));
-  const braidR = (t: number): number => R * (0.42 - 0.16 * t);
+  const frames = buildFrames(curvePoints(pts, 96), new THREE.Vector3(1, 0, 0));
+  const braidR = (t: number): number => R * (0.5 - 0.2 * t);
   // Ties pinch the plait; the bulbs are the swellings between them, and they are
   // most of why this silhouette is hers and not a generic ponytail.
   const ties = [0.035, 0.3, 0.56, 0.8];
   const pinch = (t: number): number => {
     let k = 1;
-    for (const c of ties) k -= 0.3 * Math.exp(-(((t - c) / 0.045) ** 2));
+    for (const c of ties) k -= 0.36 * Math.exp(-(((t - c) / 0.05) ** 2));
     return k;
   };
   const bind = chain(ctx, `${ctx.def.id}:braid`, frames, 6, (t) => braidR(t), 0.45, 0.45, 0.08);
@@ -1039,7 +1103,7 @@ function buildDavi(ctx: Ctx): void {
   const ROWS = [22, 46, 70];
   const PER_ROW = 6;
   const BACK = ROWS.length * PER_ROW;
-  const FRONT = 6;
+  const FRONT = 10;
 
   for (let i = 0; i < BACK + FRONT; i++) {
     const front = i >= BACK;
@@ -1105,12 +1169,12 @@ function buildDavi(ctx: Ctx): void {
     // A few locs carry blue beads.
     if (!front && k % 7 === 1) {
       const c = 0.62 + 0.12 * j2;
-      const lo = Math.max(0, Math.round((c - 0.035) * (frames.length - 1)));
-      const hi = Math.min(frames.length - 1, Math.round((c + 0.035) * (frames.length - 1)));
+      const lo = Math.max(0, Math.round((c - 0.05) * (frames.length - 1)));
+      const hi = Math.min(frames.length - 1, Math.round((c + 0.05) * (frames.length - 1)));
       sweep(tie, frames.slice(lo, hi + 1), {
-        radius: () => locR * 1.45,
+        radius: () => locR * 1.28,
         flat: () => 1,
-        sides: 8,
+        sides: 10,
         bind,
         tile: ctx.tile,
         capStart: true,
@@ -1121,13 +1185,13 @@ function buildDavi(ctx: Ctx): void {
   // The blue tie, wrapping the gathered bundle.
   const tieDir = new THREE.Vector3(0, -0.55, -0.84).normalize();
   const tf = buildFrames(
-    [gather.clone().addScaledVector(tieDir, -R * 0.16), gather.clone(), gather.clone().addScaledVector(tieDir, R * 0.16)],
+    [gather.clone().addScaledVector(tieDir, -R * 0.12), gather.clone(), gather.clone().addScaledVector(tieDir, R * 0.12)],
     new THREE.Vector3(1, 0, 0),
   );
   sweep(tie, tf, {
-    radius: (t) => R * (0.46 + 0.06 * Math.sin(t * Math.PI)),
-    flat: () => 0.72,
-    sides: 12,
+    radius: (t) => R * (0.36 + 0.05 * Math.sin(t * Math.PI)),
+    flat: () => 0.7,
+    sides: 14,
     tile: ctx.tile,
     capStart: true,
   });
@@ -1160,9 +1224,9 @@ function buildVera(ctx: Ctx): void {
   // the skull and hanging free.
   const arc: THREE.Vector3[] = [];
   const stops: [number, number][] = [
-    [0, 92],
-    [0, 62],
-    [0, 30],
+    [0, 94],
+    [0, 68],
+    [0, 34],
     [0, 6],
     [180, 26],
     [180, 56],
@@ -1181,7 +1245,7 @@ function buildVera(ctx: Ctx): void {
   // Ridge radius: tallest over the forehead and crown where the mohawk stands
   // up, thinning into the plait that hangs down the back.
   const ridge = (t: number): number =>
-    R * (0.34 + 0.08 * Math.sin(clamp01(t / 0.45) * Math.PI)) * (1 - 0.52 * smoothstep(0.5, 1, t));
+    R * (0.34 + 0.08 * Math.sin(clamp01(t / 0.45) * Math.PI)) * (1 - 0.38 * smoothstep(0.5, 1, t));
   const bind = chain(ctx, `${ctx.def.id}:mohawk`, frames, 5, ridge, 0.8, 0.5, 0.62);
 
   braid(hair, frames, {
@@ -1298,7 +1362,13 @@ function detailBase(tex: THREE.Texture, target: THREE.ColorRepresentation): THRE
  * invented: both ends of the range are authored data.
  */
 function hairBase(p: { hair: number; hairSheen: number }): THREE.Color {
-  return new THREE.Color(p.hair).lerp(new THREE.Color(p.hairSheen), 0.62);
+  const c = new THREE.Color(p.hair).lerp(new THREE.Color(p.hairSheen), 0.62);
+  // Held under the diffuse ceiling the stage's exposure allows. Vera's copper is
+  // bright enough that the lit band would clip, and a clipped band is a flat
+  // orange shape with the plait's form burnt out of it.
+  const peak = Math.max(c.r, c.g, c.b);
+  if (peak > 0.42) c.multiplyScalar(0.42 / peak);
+  return c;
 }
 
 // ---------------------------------------------------------------------------
@@ -1400,44 +1470,55 @@ export function buildHair(rig: BuiltCharacter, def: FighterDef = rig.def): THREE
     skinned: true,
   });
 
-  const fuzzTex = hairStrands({
-    color: DETAIL_GREY,
-    sheenColor: p.hairSheen,
-    style: 'strand',
-    seed: seed + 9,
-    strands: 96,
-    clump: 0.15,
-    variation: 0.3,
-    roughness: 0.6,
-  });
-  // Shaved hair shows the scalp between the stubble, so it sits between the hair
-  // colour and the skin's own shadow — never the flat hair colour thinned down.
-  // Built from the *dark* hair tone, not the lit one: a shaved side is scalp
-  // showing through a millimetre of stubble, so it is duller and darker than any
-  // grown hair on the same head — the one thing that stops it reading as skin.
-  const shavedColor = new THREE.Color(p.hair).lerp(new THREE.Color(p.skinShadow), 0.4);
-  const fuzzMat = createToonMaterial({
-    kind: 'hair',
-    color: detailBase(fuzzTex.map, shavedColor),
-    shadowColor: new THREE.Color(p.hair).lerp(new THREE.Color(p.skinShadow), 0.25),
-    rimColor: p.rim,
-    map: fuzzTex.map,
-    normalMap: fuzzTex.normalMap,
-    normalScale: 0.6,
-    specular: 0.22,
-    outlineColor: inkColor(shavedColor),
-    outlineWidth: 0.7,
-    skinned: true,
-  });
+  // Built on demand: only Vera has shaved sides, and a stubble map is a 512²
+  // synthesis nobody else should pay for at load.
+  const fuzzMat = (): THREE.Material => {
+    const fuzzTex = hairStrands({
+      color: DETAIL_GREY,
+      sheenColor: p.hairSheen,
+      style: 'strand',
+      seed: seed + 9,
+      strands: 96,
+      clump: 0.15,
+      variation: 0.3,
+      roughness: 0.6,
+    });
+    // A shaved side is scalp showing through a millimetre of stubble, so it is
+    // built from the *dark* hair tone and pulled well down: at the exposure a
+    // stage runs at, anything near the hair's own value comes back off the
+    // tonemapper as bright skin, which is the one thing it must not read as.
+    const shaved = new THREE.Color(p.hair)
+      .lerp(new THREE.Color(p.skinShadow), 0.45)
+      .multiplyScalar(0.3);
+    return createToonMaterial({
+      // Not the hair treatment: a millimetre of stubble has no fibre bundle to
+      // run a sheen band along, and the hair kind's anisotropic highlight is
+      // exactly what turned the shaved sides pale. Matte cloth is what a buzzed
+      // scalp actually behaves like.
+      kind: 'cloth',
+      color: detailBase(fuzzTex.map, shaved),
+      shadowColor: new THREE.Color(p.hair).lerp(new THREE.Color(p.skinShadow), 0.25).multiplyScalar(0.3),
+      rimColor: p.rim,
+      rimPower: 0.5,
+      map: fuzzTex.map,
+      normalMap: fuzzTex.normalMap,
+      normalScale: 0.6,
+      specular: 0.05,
+      outlineColor: inkColor(shaved),
+      outlineWidth: 0.7,
+      skinned: true,
+    }) as unknown as THREE.Material;
+  };
 
-  const tieColor = def.id === 'mali' ? p.wrap : p.accent;
-  const tieMat = createToonMaterial({
-    kind: def.id === 'mali' ? 'satin' : 'cloth',
-    color: tieColor,
-    rimColor: p.rim,
-    outlineWidth: 0.75,
-    skinned: true,
-  });
+  const tieMat = (): THREE.Material =>
+    createToonMaterial({
+      // Mali's are satin ribbon; Kai's hachimaki and Davi's cord are woven.
+      kind: def.id === 'mali' ? 'satin' : 'cloth',
+      color: def.id === 'mali' ? p.wrap : p.accent,
+      rimColor: p.rim,
+      outlineWidth: 0.75,
+      skinned: true,
+    }) as unknown as THREE.Material;
 
   // --- Meshes ----------------------------------------------------------------
   const group = new THREE.Group();
@@ -1450,12 +1531,10 @@ export function buildHair(rig: BuiltCharacter, def: FighterDef = rig.def): THREE
   const materials: THREE.Material[] = [];
   let triangles = 0;
 
-  const add = (buf: Buf, material: THREE.Material, name: string): void => {
+  const add = (buf: Buf, makeMaterial: () => THREE.Material, name: string): void => {
     const geometry = buf.geometry();
-    if (!geometry) {
-      material.dispose();
-      return;
-    }
+    if (!geometry) return;
+    const material = makeMaterial();
     const mesh = new THREE.SkinnedMesh(geometry, material);
     mesh.name = `${def.id}:${name}`;
     mesh.castShadow = true;
@@ -1473,7 +1552,7 @@ export function buildHair(rig: BuiltCharacter, def: FighterDef = rig.def): THREE
     rig.outlines.push(createOutlineMesh(mesh));
   };
 
-  add(ctx.hair, hairMat, 'hair');
+  add(ctx.hair, () => hairMat as unknown as THREE.Material, 'hair');
   add(ctx.fuzz, fuzzMat, 'fuzz');
   add(ctx.tie, tieMat, 'ties');
 

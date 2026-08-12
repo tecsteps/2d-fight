@@ -42,9 +42,25 @@ function frameOn(box: THREE.Box3, fill = 0.82): void {
 function place(id: string, x: number): { height: number; headY: number } {
   const def = fighterById(id);
   const rig = buildCharacter(def);
+  // `late` reproduces an integrator calling buildHair after the rig is posed —
+  // the case the pose snapshot inside buildHair exists to survive.
+  const late = params.get('late') === '1';
+  if (late) {
+    rig.resetPose();
+    if (posed) rig.applyPose(NEUTRAL_STANCE);
+    rig.root.rotation.y = 0.3;
+  }
   buildHair(rig);
   rig.resetPose();
   if (posed) rig.applyPose(NEUTRAL_STANCE);
+  // Turning the head hard is the only way to see whether the hair is really
+  // skinned to it rather than parked in rest space.
+  const headYaw = parseFloat(params.get('headyaw') ?? '0');
+  if (headYaw) {
+    rig.bones.head.rotation.y = headYaw;
+    rig.bones.neck.rotation.y = headYaw * 0.4;
+    rig.bones.head.rotation.x = headYaw * 0.3;
+  }
   rig.root.rotation.y = yaw;
   rig.root.position.x = x;
   renderer.world.add(rig.root);

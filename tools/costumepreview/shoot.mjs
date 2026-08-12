@@ -73,7 +73,7 @@ for (const view of VIEWS) {
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
   const file = path.join(OUT, `${TAG}-${FIGHTER}-${view}.png`);
   await writeFile(file, await page.locator('#stage').screenshot());
-  console.log(`${file}  pieces=${stats.pieces} tris=${stats.triangles}`);
+  console.log(`${file}  pieces=${stats.pieces} tris=${stats.triangles} body=${stats.bodyMs}ms costume=${stats.costumeMs}ms`);
   if (errors.length) {
     console.error(`[${view}] console errors:`, errors.slice(0, 6));
     failed = true;
