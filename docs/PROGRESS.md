@@ -128,6 +128,25 @@ node tools/shots/capture.mjs --scene tex                           # texture she
 node tools/shots/capture.mjs --scene lineup --post 0               # bypass post
 ```
 
+## Queued for integration (blocked on agents holding the files)
+
+1. **A matte pass for `measure.py`.** The per-figure mask uses a column median as
+   a stand-in for "the background". That only holds while backdrop and floor are
+   the same value — i.e. while the stage is nearly black. On a stage that meets
+   the budget, the near floor passes the mask and every per-figure number becomes
+   part ground: shadow/lit ratios drift toward 0.9 on a roster whose ratio has not
+   moved. **The tool currently only produces trustworthy per-figure numbers on
+   frames that fail the budget it measures.**
+   Fix: add `?scene=lineup&matte=1` rendering fighters flat-white on black, and
+   have `measure.py` take `--matte <png>` and use it as the mask. Every purely
+   photometric alternative either admits the near-black ink and wrecks the hue
+   statistics, or shifts the historical numbers so reviews 001/002 stop being
+   comparable.
+   *Blocked on: the wave C stage agent, which owns `main.ts` and `measure.py`.*
+
+2. **Wire `stage.setContactPoints()`** for the `solo` scene too — the stage agent
+   added the API and wired `lineup` only.
+
 ## Next
 
 1. Wave B2: Mali, Davi and Vera costumes on the framework Kai proves out.

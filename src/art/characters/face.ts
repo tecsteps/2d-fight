@@ -882,7 +882,13 @@ export function buildFace(rig: BuiltCharacter, def: FighterDef = rig.def): THREE
   const lipMat = faceMaterial('skin', lipColor, def, { normalMap: detail.normalMap });
   const lashColor = new THREE.Color(p.hair).multiplyScalar(0.42).lerp(new THREE.Color(0x090608), 0.5);
   const lashMat = faceMaterial('hair', lashColor, def, { specular: 0.05 });
-  const browMat = faceMaterial('hair', new THREE.Color(p.hair).multiplyScalar(0.82), def);
+  // Brows have to read as *darker than skin* on every fighter. Vera's auburn
+  // hair at 0.82 came out a mid-brown that vanished against her own face.
+  const browMat = faceMaterial(
+    'hair',
+    new THREE.Color(p.hair).multiplyScalar(0.58).lerp(new THREE.Color(0x1a0f0c), 0.25),
+    def,
+  );
   const eyeMat = faceMaterial('wrap', 0xffffff, def, {
     map: eyeTexture(spec, SCLERA),
     specular: 0.12,
