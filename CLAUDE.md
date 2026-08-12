@@ -24,6 +24,28 @@ be stopped at any time**. Nothing survives except what is committed and pushed.
    1200–1800s. On wake: call `TaskList`; if the workflow is gone/dead and its
    work is unfinished, **restart it** (`Workflow({scriptPath, resumeFromRunId})`
    resumes from the longest unchanged prefix — cached agents return instantly).
+
+3. **Agents must not hang, and hangs must be detected.**
+
+   *Detection*: arm the watcher on every workflow launch. It watches agents
+   append to their transcripts and shouts when that stops — the failure mode a
+   completion notification can never catch, because a wedged agent keeps the run
+   nominally "alive" forever.
+
+   ```
+   Monitor({ command: "tools/workflow-watch.sh <workflow-transcript-dir> <agent-count> 420",
+             persistent: true })
+   ```
+
+   The transcript dir is in the Workflow tool result. On a `STALL` event: read
+   the newest `agent-*.jsonl` to see what it is stuck on, `TaskStop` the
+   workflow, then resume with `resumeFromRunId` so finished agents return from
+   cache and only the wedged one re-runs.
+
+   *Prevention*: every workflow prompt must carry the *no blocking commands*
+   rule below. The killers are a foreground dev server, an interactive prompt,
+   and an unbounded wait — all of which look like normal commands right up until
+   nothing ever returns.
 3. **Every workflow's script path is persisted** under the session dir and
    returned in the tool result. Record it in `docs/PROGRESS.md` so a restarted
    session can resume rather than redo.
@@ -33,6 +55,23 @@ be stopped at any time**. Nothing survives except what is committed and pushed.
 5. **`docs/PROGRESS.md` is the source of truth for resuming.** It records: what
    is done, what is in flight, the last workflow run IDs, and the critic scores.
    A fresh session should be able to read it and continue with zero context.
+
+### The no-blocking-commands rule (paste into every workflow prompt)
+
+> Never run a command that does not return on its own. Specifically:
+> - **No foreground dev server.** `npm run dev`, `vite`, `vite preview`, `python
+>   -m http.server` never exit. If you need the app running, use the capture
+>   harness (`node tools/shots/capture.mjs`), which starts and stops its own
+>   server, or launch with `run_in_background: true`.
+> - **No `playwright install`** — Chromium is preinstalled; that command downloads
+>   for minutes and may hang on the egress proxy.
+> - **Wrap anything that touches the network or a browser in `timeout`**, e.g.
+>   `timeout 180 node tools/shots/capture.mjs ...`. A hung browser launch is the
+>   single most common wedge.
+> - **No interactive commands** — no `git rebase -i`, no `npm init` without `-y`,
+>   nothing that opens a pager. Set `GIT_PAGER=cat` if you shell out to git.
+> - **No `tail -f`, no `watch`, no unbounded polling loops.**
+> - Prefer the Read/Edit/Write/Grep tools over shell equivalents; they cannot hang.
 
 ### Recovery checklist after a container restart
 
