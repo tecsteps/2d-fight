@@ -162,20 +162,20 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
   // hip to the low calf, then gathered hard into a knit cuff. That constant
   // girth over a leg that tapers is what makes them break silhouette — the
   // offset has to *grow* down the thigh just to hold the same width.
-  const waistTopY = Y('hip') + 0.085;
-  const waistLowY = Y('hip') + 0.036;
+  const waistTopY = Y('hip') + 0.086;
+  const waistLowY = Y('hip') + 0.026;
   const cuffLowY = m.ankleY + 0.115;
   const cuffHighY = m.ankleY + 0.176;
 
   const legSlack = ramp([
     [waistTopY, 0.008],
-    [Y('hip'), 0.014],
-    [Y('crotch') - 0.03, 0.030],
-    [Y('midThigh'), 0.042],
-    [Y('knee') + 0.05, 0.050],
-    [Y('knee'), 0.050],
-    [Y('calf'), 0.046],
-    [cuffHighY + 0.055, 0.034],
+    [Y('hip'), 0.013],
+    [Y('crotch') - 0.03, 0.025],
+    [Y('midThigh'), 0.037],
+    [Y('knee') + 0.05, 0.044],
+    [Y('knee'), 0.045],
+    [Y('calf'), 0.043],
+    [cuffHighY + 0.055, 0.032],
     [cuffHighY, 0.013],
     [cuffLowY + 0.008, 0.006],
   ]);
@@ -196,9 +196,9 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
    * parted and the cloth is free to hang.
    */
   const innerSquash = ramp([
-    [Y('knee'), 0.30],
-    [Y('midThigh'), 0.48],
-    [Y('crotch'), 0.66],
+    [Y('knee'), 0.32],
+    [Y('midThigh'), 0.56],
+    [Y('crotch'), 0.82],
   ]);
 
   for (const side of ['L', 'R'] as const) {
@@ -241,9 +241,16 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       // The top edge lives under the waistband; a hem bead there would swell
       // straight into the layer above it.
       toEdge: { fold: 0.012, roll: 0.005, rings: 3 },
-      keepSide: { normal: new THREE.Vector3(sign, 0, 0), d: -0.008, softness: 0.012 },
+      keepSide: { normal: new THREE.Vector3(sign, 0, 0), d: -0.005, softness: 0.009 },
       tileMetres: tex.garments.abada.tileMetres * WEAVE,
     });
+    // Off the shadow map's receiving list, and this one is not cosmetic. The
+    // seat of a loose trouser spans the gluteal cleft, so in the key's view it
+    // sits behind a body that is casting — a correct shadow, but one that lands
+    // on the highest-contrast cloth in the outfit at the resolution of a couple
+    // of shadow texels, and cream at the bottom of a cel ramp is black. What you
+    // get is a stair-stepped blot the size of a hand. Nothing else is casting
+    // onto these shells that the ramp does not already describe.
     attachGarment(rig, {
       name: `abada${side}`,
       geometry: shell.geometry,
@@ -253,11 +260,11 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       tex: tex.garments.abada,
       normalScale: 0.85,
       specular: 0.16,
-    }, out);
+    }, out).receiveShadow = false;
 
     // The outseam stripe. Same axis, same fold field, same angle — so it is a
     // rigid 3 mm lift of the trouser surface and can never dip into it.
-    const stripeHalf = 30 * DEG;
+    const stripeHalf = 19 * DEG;
     const stripe = buildShell(body, {
       axis,
       from: axis.sAtY(waistLowY),
@@ -283,7 +290,9 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       normalScale: 0.9,
       specular: 0.22,
       outlineWidth: 0.55,
-    }, out);
+      // Rides 3 mm above the abadá, so it has to answer the shadow map the same
+      // way or a stripe would light differently from the cloth it is sewn to.
+    }, out).receiveShadow = false;
 
     // Knit ankle cuff. Rigid to the shin: the whole ring sits between the ankle
     // and the calf, one bone's motion is the truth for it, and binding it that
@@ -347,7 +356,7 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
   }, out);
 
   buildHoodie(rig, def, tex, out);
-  buildCordBelt(rig, def, tex, out, waistAxis, waistTopY - 0.010);
+  buildCordBelt(rig, def, tex, out, waistAxis, waistTopY - 0.022);
 
   // -------------------------------------------------------------- handwraps --
   for (const side of ['L', 'R'] as const) {
@@ -355,7 +364,7 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
     const shell = buildShell(body, {
       axis,
       from: 0.46,
-      to: 0.94,
+      to: 0.90,
       offset: ramp([[0, LAYER.skin], [0.4, LAYER.skin + 0.0020], [1, LAYER.skin]]),
       cloth: 0.0034,
       segments: 15,
@@ -438,47 +447,57 @@ function buildHoodie(
    * whole deltoid bare.
    */
   const bridge = (s: number): number =>
-    0.15 * THREE.MathUtils.smoothstep(axis.pointAt(s).y, deltoidCrest - 0.082, deltoidCrest - 0.012);
+    0.15 * THREE.MathUtils.smoothstep(axis.pointAt(s).y, deltoidCrest - 0.055, deltoidCrest - 0.012);
 
-  // The front opening. The arc stops 21° short of the sternum on each side, and
-  // over the next 35° the hem climbs from the crop line to the collarbone —
+  // The front opening. The arc stops 16° short of the sternum on each side, and
+  // over the next 40° the hem climbs from the crop line to the collarbone —
   // which is the diagonal lapel edge, carried as a rolled hem rather than a cut.
-  const GAP = 21 * DEG;
+  const GAP = 16 * DEG;
   const hem = edgeAtHeight(axis, [
-    [21, m.neckBaseY - 0.070],
-    [28, m.neckBaseY - 0.145],
-    [36, hemY + 0.140],
-    [44, hemY + 0.055],
-    [56, hemY + 0.001],
-    [72, hemY + 0.008],
-    [90, hemY + 0.038],
-    [120, hemY + 0.060],
-    [180, hemY + 0.070],
-    [-120, hemY + 0.060],
-    [-90, hemY + 0.038],
-    [-72, hemY + 0.008],
-    [-56, hemY + 0.001],
-    [-44, hemY + 0.055],
-    [-36, hemY + 0.140],
-    [-28, m.neckBaseY - 0.145],
-    [-21, m.neckBaseY - 0.070],
+    [16, m.neckBaseY - 0.088],
+    [24, m.neckBaseY - 0.176],
+    [34, hemY + 0.115],
+    [42, hemY + 0.022],
+    [50, hemY + 0.000],
+    [66, hemY + 0.020],
+    [92, hemY + 0.046],
+    [120, hemY + 0.064],
+    [180, hemY + 0.074],
+    [-120, hemY + 0.064],
+    [-92, hemY + 0.046],
+    [-66, hemY + 0.020],
+    [-50, hemY + 0.000],
+    [-42, hemY + 0.022],
+    [-34, hemY + 0.115],
+    [-24, m.neckBaseY - 0.176],
+    [-16, m.neckBaseY - 0.088],
   ]);
-  // The shoulder seam. Nearly level all the way round: what makes the piece read
-  // as sleeveless is the bridge below, not a notch in this edge.
+  /**
+   * The shoulder seam and neckline.
+   *
+   * Away from the front it is authored well *above* the neck base, and that is
+   * not slack: a radial sweep from a near-vertical axis is almost tangent to the
+   * top of a shoulder, so an edge asked for at shoulder height lands out on the
+   * deltoid and the piece reads as off-the-shoulder. Five centimetres higher and
+   * the same rings wrap over the trapezius and close on the neck, which is where
+   * a hoodie's shoulder seam actually sits.
+   */
   const seam = edgeAtHeight(axis, [
-    [21, m.neckBaseY - 0.022],
-    [50, m.neckBaseY - 0.026],
-    [78, m.neckBaseY - 0.030],
-    [96, m.neckBaseY - 0.026],
-    [120, m.neckBaseY - 0.008],
-    [150, m.neckBaseY + 0.006],
-    [180, m.neckBaseY + 0.010],
-    [-150, m.neckBaseY + 0.006],
-    [-120, m.neckBaseY - 0.008],
-    [-96, m.neckBaseY - 0.026],
-    [-78, m.neckBaseY - 0.030],
-    [-50, m.neckBaseY - 0.026],
-    [-21, m.neckBaseY - 0.022],
+    [16, m.neckBaseY - 0.046],
+    [26, m.neckBaseY - 0.020],
+    [42, m.neckBaseY + 0.012],
+    [62, m.neckBaseY + 0.032],
+    [84, m.neckBaseY + 0.040],
+    [104, m.neckBaseY + 0.042],
+    [132, m.neckBaseY + 0.050],
+    [180, m.neckBaseY + 0.058],
+    [-132, m.neckBaseY + 0.050],
+    [-104, m.neckBaseY + 0.042],
+    [-84, m.neckBaseY + 0.040],
+    [-62, m.neckBaseY + 0.032],
+    [-42, m.neckBaseY + 0.012],
+    [-26, m.neckBaseY - 0.020],
+    [-16, m.neckBaseY - 0.046],
   ]);
   // The two free panels hang off the chest instead of lying on it; the closed
   // back does not.
@@ -546,31 +565,31 @@ function buildHoodie(
     [-96, m.neckBaseY - 0.072],
   ]);
   const hoodTop = edgeAtHeight(hoodAxis, [
-    [96, m.neckBaseY + 0.010],
-    [118, m.neckBaseY + 0.040],
-    [150, m.neckBaseY + 0.058],
-    [180, m.neckBaseY + 0.063],
-    [-150, m.neckBaseY + 0.058],
-    [-118, m.neckBaseY + 0.040],
-    [-96, m.neckBaseY + 0.010],
+    [96, m.neckBaseY + 0.034],
+    [118, m.neckBaseY + 0.056],
+    [150, m.neckBaseY + 0.068],
+    [180, m.neckBaseY + 0.072],
+    [-150, m.neckBaseY + 0.068],
+    [-118, m.neckBaseY + 0.056],
+    [-96, m.neckBaseY + 0.034],
   ]);
   // Swell: thin where it is pinned under its own seam at the shoulders, deepest
   // behind the neck where the crown of the hood folds over on itself.
   const hoodSwell = ramp([
-    [m.neckBaseY - 0.30, 0.030],
-    [m.neckBaseY - 0.20, 0.038],
-    [m.neckBaseY - 0.10, 0.048],
-    [m.neckBaseY - 0.01, 0.058],
-    [m.neckBaseY + 0.07, 0.062],
+    [m.neckBaseY - 0.30, 0.033],
+    [m.neckBaseY - 0.20, 0.040],
+    [m.neckBaseY - 0.10, 0.050],
+    [m.neckBaseY - 0.01, 0.059],
+    [m.neckBaseY + 0.07, 0.063],
   ]);
   const hoodTaper = byAngle([
-    [96, 0.70],
-    [116, 0.86],
-    [145, 0.98],
+    [96, 0.80],
+    [116, 0.90],
+    [145, 0.99],
     [180, 1.0],
-    [-145, 0.98],
-    [-116, 0.86],
-    [-96, 0.70],
+    [-145, 0.99],
+    [-116, 0.90],
+    [-96, 0.80],
   ]);
 
   const hood = buildShell(body, {

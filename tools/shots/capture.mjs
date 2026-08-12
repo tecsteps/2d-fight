@@ -29,6 +29,11 @@ const TAG = args.tag ?? 'frame';
 const SCENE = args.scene ?? 'lineup';
 const FIGHTER = args.fighter ?? '';
 const POST = args.post ?? '1';
+// Fighters as flat white on black, no stage, no post — the mask
+// `tools/critic/measure.py --matte` needs to know which pixels are fighter
+// without guessing from brightness. Shoot it alongside the look frame at the
+// same size and frame numbers.
+const MATTE = args.matte === true || args.matte === '1';
 
 const server = await createServer({
   server: { port: 5199, strictPort: true, host: '127.0.0.1' },
@@ -37,6 +42,7 @@ const server = await createServer({
 await server.listen();
 const q = new URLSearchParams({ scene: SCENE, post: POST });
 if (FIGHTER) q.set('fighter', FIGHTER);
+if (MATTE) q.set('matte', '1');
 const url = `http://127.0.0.1:5199/?${q}`;
 
 // The container ships a Chromium build that may not match the revision this

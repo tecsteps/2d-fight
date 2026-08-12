@@ -191,7 +191,15 @@ interface KindPreset {
   /** Lightness of the bounce colour, as a fraction of the lit surface's own. */
   bounceLevel: number;
   outlineWidth: number;
-  /** Multipliers on the default shadow hue rotation and value for this surface. */
+  /**
+   * Multipliers on the default shadow hue rotation and value for this surface.
+   *
+   * Every fighter surface sits at 0.95-1.15 of the rotation on purpose: a dressed
+   * fighter whose skin shadow rotates 40° and whose vest rotates 20° reads as two
+   * light sources, and measured on the lineup that mismatch was most of why the
+   * costumed fighters' whole-figure hue delta came out at −4° to −12° while the
+   * nude one measured −26°. Only `stage` is deliberately left near neutral.
+   */
   shadowShift: number;
   shadowValue: number;
   /**
@@ -425,7 +433,7 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     // land on the light's side of the terminator. Letting a hot red subsurface
     // term wash across the shadow band was one of the four warm pushes that
     // erased the frame's temperature separation.
-    sss: 0.22,
+    sss: 0.16,
     // Was 1.2 over a 0.33 edge — that is a 51°-wide Fresnel wash, not a rim, and
     // it was the single largest warm additive sitting on the shadow side.
     //
@@ -460,8 +468,14 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     // band inside the last 1% of the width, underneath the ink. −0.16 is the outer
     // ~5% of a limb's projected width, plus every downward-facing plane — jaw,
     // pectoral, forearm, calf — which is the run a painter inks the bounce along.
-    bounce: 0.55,
-    bounceEdge: -0.16,
+    //
+    // Then pulled back to −0.24 and 0.38 after measuring what a wide one costs:
+    // three of the four roster rim hexes are warm cream, so a generous bounce is a
+    // generous *warm* additive sitting exactly where the plum shadow is, and on
+    // Vera's bare arm it took the shadow's hue rotation from −35° to −12°. The
+    // band that carries identity cannot be the band that erases temperature.
+    bounce: 0.38,
+    bounceEdge: -0.24,
     bounceSoft: 0.05,
     bounceLevel: 0.42,
     terminatorNoise: 0.007,
@@ -472,7 +486,7 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     // V48.7 against a lit V63.8 with the old value: a 15-point terminator, which
     // is not a two-tone read.
     ambient: 0.38,
-    lightTint: 0.24,
+    lightTint: 0.18,
     outlineWidth: 0.9,
     // Flesh shadow goes plum rather than straight to blue — blood under the
     // skin, not skylight on top of it.
@@ -525,6 +539,16 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     // roster: lit spread 0.39-0.59 -> 0.38-0.64, shadow spread 0.15-0.26 ->
     // 0.30-0.52, shadow/lit luminance 0.31-0.36 -> 0.51-0.59, minimum pairwise
     // shadow distance 9.2 -> 13.9 before the costumes and hair are counted.
+    // Widened from {0.42..0.55} / {0.15..0.26}, and *not* widened further than
+    // this. Two things were measured on the way here. Opening the bands out
+    // restores per-character value separation, which is the only identity axis
+    // this roster has — its four skin hexes span 16° of hue with Kai and Vera 2°
+    // apart. But opening the *floor* buys pairwise shadow separation by darkening
+    // Davi, whose lit shin is already the frame's worst figure-ground contrast
+    // (Weber 0.12 against the stage's new mid-value floor), and raising the
+    // *ceiling* to 0.70 was tried and measured worse on both — min pairwise
+    // shadow distance 13.7 -> 9.6. Buying one budget row by spending another is
+    // the move FRAME_BUDGET.md exists to stop; this is where the two balance.
     litBand: { min: 0.42, max: 0.64, slope: 0.55, chromaKnee: 0.62, chromaSlope: 0.55 },
     shadowBand: { min: 0.33, max: 0.55, slope: 0.6, chromaKnee: 0.9, chromaSlope: 0.6 },
     // 0.44 x 1.75 = 0.77. The shadow *colour* has to sit near 0.59 of the lit
@@ -553,6 +577,7 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     shadowLevel: 0.16,
     deepLevel: 0,
     shadowValue: 1.35,
+    shadowShift: 1.15,
     shadowSat: 0.95,
     shadowSatLift: 0.08,
     wrap: 0.5,
@@ -595,6 +620,7 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     deepLevel: 0.04,
     litLevel: 0.8,
     shadowValue: 1.5,
+    shadowShift: 1.15,
     shadowSat: 1.0,
     shadowSatLift: 0.06,
     cavity: 0.07,
@@ -633,6 +659,7 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     deepLevel: 0.08,
     litLevel: 0.78,
     shadowValue: 1.5,
+    shadowShift: 1.15,
     shadowSat: 1.0,
     shadowSatLift: 0.06,
     shadeGain: 1,
@@ -668,6 +695,7 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     deepLevel: 0.02,
     litLevel: 0.82,
     shadowValue: 1.35,
+    shadowShift: 1.15,
     castDepth: 0.78,
     bounce: 0.3,
     bounceLevel: 0.24,
@@ -700,6 +728,7 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     deepLevel: 0.02,
     litLevel: 0.8,
     shadowValue: 1.4,
+    shadowShift: 1.15,
     castDepth: 0.78,
     bounce: 0.3,
     bounceLevel: 0.24,
@@ -734,6 +763,7 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     deepLevel: 0.1,
     litLevel: 0.84,
     shadowValue: 1.5,
+    shadowShift: 1.15,
     shadowSat: 0.95,
     shadowSatLift: 0.08,
     castDepth: 0.75,
