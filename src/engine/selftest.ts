@@ -27,8 +27,16 @@ const CHECKPOINT = 25;
 const ROLLBACK_FROM = 200;
 const ROLLBACK_TO = 400;
 
-/** Baseline hash of the 600-tick script. Re-pin deliberately, never silently. */
-export const EXPECTED_HASH: number = 0xb2ac4c22;
+/**
+ * Baseline hash of the 600-tick script. Re-pin deliberately, never silently.
+ *
+ * Re-pinned after wave C changed roster proportions (build now spans 0.32-0.97,
+ * height 1.66-1.90) and wave D changed two skin palettes. Both feed the physics
+ * through per-fighter weight and reach, so the script's trajectory genuinely
+ * differs. The property that matters was re-verified at the same time: replay
+ * from a mid-run checkpoint reproduces the straight run exactly.
+ */
+export const EXPECTED_HASH: number = 0x86bba811;
 
 interface Step {
   dir: number;
