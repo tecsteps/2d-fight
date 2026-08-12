@@ -51,6 +51,16 @@ import {
 
 const DEG = Math.PI / 180;
 
+/**
+ * Weave tiling multiplier.
+ *
+ * `fighterTextures` authors its tiles generously — 56 threads over 25 cm is a
+ * 4.5 mm thread, which at fighting-game distance reads as a chevron blanket
+ * rather than as gi twill. Tiling at just over half that puts the thread near
+ * 2 mm, which is what the cloth actually is.
+ */
+const WEAVE = 0.55;
+
 /** Angles used often enough to be worth naming. 0 is the front, +90 the left. */
 const FRONT = 0;
 
@@ -148,7 +158,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       toEdge: { fold: 0.015, roll: 0.0065, rings: 4 },
       drape: { folds: 8, amplitude: 0.0080, along: 3.0, seed: 11 + (side === 'R' ? 5 : 0), sag: 0.005 },
       keepSide: { normal: new THREE.Vector3(sign, 0, 0), d: -0.004, softness: 0.008 },
-      tileMetres: tex.garments.pants.tileMetres,
+      tileMetres: tex.garments.pants.tileMetres * WEAVE,
     });
     attachGarment(rig, {
       name: `pant${side}`,
@@ -255,7 +265,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
     fromEdge: { fold: 0.018, roll: 0.005, rings: 3 },
     toEdge: { fold: 0.013, roll: 0.0042, rings: 3 },
     drape: { folds: 7, amplitude: 0.0058, along: 2.6, seed: 3, sag: 0.004 },
-    tileMetres: tex.garments.gi.tileMetres,
+    tileMetres: tex.garments.gi.tileMetres * WEAVE,
   });
   attachGarment(rig, {
     name: 'gi',
@@ -295,7 +305,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
     follow: GI_FOLLOW,
     bridge: giBridge,
     toEdge: { fold: 0.013, roll: 0.0042, rings: 3 },
-    tileMetres: tex.garments.gi.tileMetres,
+    tileMetres: tex.garments.gi.tileMetres * WEAVE,
   });
   attachGarment(rig, {
     name: 'giUnder',
@@ -320,7 +330,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
         thickness: CLOTH * 1.1,
         lift: -CLOTH * 0.3,
         sides: 10,
-        tileMetres: tex.garments.obi.tileMetres,
+        tileMetres: tex.garments.obi.tileMetres * WEAVE,
       }),
     );
   };
@@ -387,7 +397,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       fromEdge: { fold: 0.012, roll: 0.0055, rings: 3 },
       toEdge: w.hemTop ? { fold: 0.012, roll: 0.0055, rings: 3 } : undefined,
       drape: { folds: 9, amplitude: 0.0022, along: 1.2, seed: 7 },
-      tileMetres: tex.garments.obi.tileMetres,
+      tileMetres: tex.garments.obi.tileMetres * WEAVE,
     });
     attachGarment(rig, {
       name: w.name,
@@ -445,7 +455,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
         thickness: CLOTH * 1.4,
         closed: true,
         sides: 8,
-        tileMetres: tex.garments.obi.tileMetres,
+        tileMetres: tex.garments.obi.tileMetres * WEAVE,
       }),
     );
   };
@@ -486,7 +496,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
         thickness: CLOTH * 1.15,
         sides: 8,
         twist: (i === 0 ? 1 : -1) * 0.55,
-        tileMetres: tex.garments.obi.tileMetres,
+        tileMetres: tex.garments.obi.tileMetres * WEAVE,
       }),
     );
   }
@@ -517,7 +527,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
       fromEdge: { fold: 0.010, roll: 0.0038, rings: 3 },
       toEdge: { fold: 0.009, roll: 0.0038, rings: 3 },
       drape: { folds: 4, amplitude: 0.0009, along: 3.5, seed: 41 },
-      tileMetres: tex.wrap.tileMetres,
+      tileMetres: tex.wrap.tileMetres * WEAVE,
     });
     // The extra turn at the wrist. One band is all it takes for the wrap to stop
     // looking like a white sock.
@@ -538,7 +548,7 @@ export function buildKaiCostume(rig: BuiltCharacter, def: FighterDef): BuiltCost
           thickness: 0.0032,
           closed: true,
           sides: 8,
-          tileMetres: tex.wrap.tileMetres,
+          tileMetres: tex.wrap.tileMetres * WEAVE,
         }),
       ]),
       kind: 'wrap',

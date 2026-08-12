@@ -60,6 +60,7 @@ results instantly, so only unfinished work re-runs.
 | --- | --- | --- | --- |
 | A — core systems | `wf_b522008f-4bd` | `.../scripts/fight-wave-a-wf_b522008f-4bd.js` | ✅ 5/5, 0 errors |
 | B1 — costume fw, hair, faces, light | `wf_ee17e0d5-293` | `.../scripts/fight-wave-b1-wf_ee17e0d5-293.js` | in flight |
+| B2 — ink contour, cel shading | `wf_f293159d-9c2` | `.../scripts/fight-wave-b2-ink-wf_f293159d-9c2.js` | in flight (queued behind B1) |
 
 Script dir:
 `/root/.claude/projects/-home-user-2d-fight/8c969954-8496-5608-ae1a-3f71afc837ed/workflows/scripts/`

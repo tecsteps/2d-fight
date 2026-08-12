@@ -1364,6 +1364,17 @@ export interface GarmentPiece {
   outlineWidth?: number;
   specular?: number;
   normalScale?: number;
+  /**
+   * Cast into the shadow map. Off by default, and that is deliberate.
+   *
+   * A garment here is a 4 mm shell wrapped onto a body that already casts its
+   * own shadow. The depth bias needed to stop such a shell shadowing its own
+   * back face is thicker than the shell is, so what you get instead is acne:
+   * black dashes crawling across an obi, and a hard-edged blot where a sash
+   * shadows the cloth 5 mm behind it. Turn it on only for a piece that stands
+   * clear of the body — a long coat, a cape.
+   */
+  castShadow?: boolean;
 }
 
 export interface BuiltCostume {
@@ -1396,6 +1407,7 @@ export function attachGarment(
   });
   if (piece.bind) bindRigid(piece.geometry, piece.bind);
   const mesh = rig.attachSkinnedPart(piece.geometry, mat as THREE.Material, `${rig.def.id}:${piece.name}`);
+  mesh.castShadow = piece.castShadow ?? false;
   into.meshes.push(mesh);
   into.materials.push(mat as THREE.Material);
   const idx = piece.geometry.getIndex();
