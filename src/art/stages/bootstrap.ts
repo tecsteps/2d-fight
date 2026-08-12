@@ -116,17 +116,20 @@ function makeFloor(): THREE.Mesh {
     const back = THREE.MathUtils.smoothstep(-z, 1, depth * 0.42);
     const wing = THREE.MathUtils.smoothstep(Math.abs(x), 5, width * 0.4);
     const near = THREE.MathUtils.smoothstep(z, 2, depth * 0.35);
-    const v = (1 - back * 0.88) * (1 - wing * 0.55) * (1 - near * 0.3);
+    const v = (1 - back * 0.8) * (1 - wing * 0.5) * (1 - near * 0.3);
     shade[i * 3] = v;
-    shade[i * 3 + 1] = v * 0.985;
-    // Slightly bluer as it recedes: cheap aerial perspective, and it puts the
-    // one cool note in the frame exactly where the warm pool is not.
-    shade[i * 3 + 2] = v * (0.95 + back * 0.12);
+    shade[i * 3 + 1] = v * 0.98;
+    // No aerial-perspective blue. It was tried and removed: the post stack's
+    // anamorphic streak is already cool and lands on the same rows as the
+    // fighters' legs, so a cool far floor stacked with it into a visible band
+    // right at the floor's far edge. The frame wants one warm plane under a cool
+    // sky, with the only seam being the value change.
+    shade[i * 3 + 2] = v * 0.9;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(shade, 3));
 
   const mat = new THREE.MeshStandardMaterial({
-    color: 0x4a3c2c,
+    color: 0x352b20,
     roughness: 0.92,
     metalness: 0.0,
     vertexColors: true,

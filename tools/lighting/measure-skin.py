@@ -89,11 +89,36 @@ def stats(vals):
     }
 
 
-def analyse(path, debug_path=None):
+# Vignette, mirroring the composite in src/render/post/shaders.ts.
+#
+# It has to be divided back out before any fighter is compared to any other,
+# because the lineup puts two fighters near the frame centre and two out at
+# x = ±0.26, where the vignette costs about 18% of the signal — roughly 12 L*.
+# Measuring through it makes the outer two look darker-skinned than they are and
+# reports a lightness ordering the light rig never produced. Vignette strength
+# lives in DEFAULT_TUNING; keep these in sync with it.
+VIG = {'strength': 0.34, 'inner': 0.34, 'outer': 0.86, 'roundness': 0.75}
+
+
+def smoothstep(a, b, x):
+    t = min(max((x - a) / (b - a), 0.0), 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def vignette_at(u, v, aspect):
+    dx = (u - 0.5) * (1 + (aspect - 1) * VIG['roundness'])
+    dy = v - 0.5
+    vd = math.hypot(dx, dy) * 1.4142
+    vig = smoothstep(VIG['outer'], VIG['inner'], vd)
+    return 1 + (vig - 1) * VIG['strength']
+
+
+def analyse(path, debug_path=None, compensate_vignette=True):
     img = Image.open(path).convert('RGB')
     W, H = img.size
     px = img.load()
     sx, sy = W / REF_W, H / REF_H
+    aspect = W / H
     dbg = ImageDraw.Draw(img) if debug_path else None
 
     out = {}
@@ -112,7 +137,8 @@ def analyse(path, debug_path=None):
                     # outline would otherwise drag the mean toward black.
                     if r + g + b < 75:
                         continue
-                    vals.append((r / 255, g / 255, b / 255))
+                    k = 1 / vignette_at(x / W, y / H, aspect) if compensate_vignette else 1
+                    vals.append((min(r * k, 255) / 255, min(g * k, 255) / 255, min(b * k, 255) / 255))
             entry[region] = stats(vals) if vals else None
             pooled += vals
             if dbg:

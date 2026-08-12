@@ -81,9 +81,42 @@ HUE_LO, HUE_HI = 340.0, 60.0
 SAT_MIN = 0.10
 VAL_MIN = 0.06
 
-# Lit and shadow planes as percentile windows of the value distribution.
+# Lit and shadow planes as percentile windows of the value distribution, used as
+# a cross-check on the Otsu split below.
 LIT_BAND = (0.70, 0.94)
 SHADOW_BAND = (0.06, 0.30)
+
+# Trim off each Otsu class before averaging, so the antialiased pixels straddling
+# the terminator and any surviving rim pixels do not pull the two means together.
+OTSU_TRIM = 0.12
+
+
+def otsu_split(px) -> int:
+    """Index in the value-sorted pixel list that best separates two classes.
+
+    Percentile windows were the right tool against the baseline, whose shading was
+    a continuous gradient with no two classes to find. They are the wrong tool now:
+    once the terminator is a hard step the areas of the two planes differ per
+    fighter, so a fixed window samples whichever plane happens to be large. Davi is
+    the case that exposed it — his shadow shape is small, so a 6–30% window landed
+    mostly inside his *lit* plane and reported his shadow 15 points below his light
+    when the visible gap is far wider.
+
+    Otsu finds the split that minimises intra-class variance, which is exactly the
+    question "where is the terminator in this histogram".
+    """
+    n = len(px)
+    vals = [p[0] for p in px]
+    total = sum(vals)
+    best, best_at, run = -1.0, n // 2, 0.0
+    for i in range(1, n):
+        run += vals[i - 1]
+        w0, w1 = i / n, (n - i) / n
+        m0, m1 = run / i, (total - run) / (n - i)
+        between = w0 * w1 * (m0 - m1) ** 2
+        if between > best:
+            best, best_at = between, i
+    return best_at
 
 
 def in_hue_window(h_deg: float) -> bool:
@@ -150,10 +183,16 @@ def report(path: str, write_mask: bool) -> None:
     rows = {}
     for name, boxes in BOXES.items():
         px = sample(im, boxes)
-        lit = band_stats(px, *LIT_BAND)
-        shd = band_stats(px, *SHADOW_BAND)
-        if not lit or not shd:
+        if len(px) < 100:
             print(f'{name:8} no skin pixels found')
+            continue
+        cut = otsu_split(px)
+        n = len(px)
+        # Fractions of the whole distribution, so band_stats can stay one code path.
+        shd = band_stats(px, OTSU_TRIM * cut / n, (cut / n) * (1 - OTSU_TRIM))
+        lit = band_stats(px, cut / n + OTSU_TRIM * (n - cut) / n, 1 - OTSU_TRIM * (n - cut) / n)
+        if not lit or not shd:
+            print(f'{name:8} Otsu split degenerate')
             continue
         # Negative dwarm = shadow is cooler than lit. This is the one that counts.
         dwarm = shd['warmth'] - lit['warmth']

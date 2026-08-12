@@ -68,18 +68,24 @@ export interface CreaseInkOptions {
   creaseThreshold?: number;
   /** Weight of the crease term relative to the silhouette term, 0..1. */
   creaseGain?: number;
+  /**
+   * How close to edge-on the surface must be before the silhouette term is
+   * allowed to ink, as `|N·V|`. Bounds the pass to real edges.
+   */
+  facingGate?: number;
   /** Screen height `width` is authored against. */
   referenceHeight?: number;
 }
 
 const DEFAULTS = {
-  width: 1.7,
-  occlusionGain: 0.85,
+  width: 1.15,
+  occlusionGain: 1.6,
   occlusionScale: 55,
-  tint: 0x4d3340,
+  tint: 0x4d3340, // only reached when a caller passes no tint and no kind
   strength: 1,
-  creaseThreshold: 0.42,
-  creaseGain: 0.7,
+  creaseThreshold: 0.85,
+  creaseGain: 0.55,
+  facingGate: 0.38,
   referenceHeight: 1080,
 };
 
@@ -125,6 +131,7 @@ uniform float uOcclusionGain;
 uniform float uOcclusionScale;
 uniform float uCreaseThreshold;
 uniform float uCreaseGain;
+uniform float uFacingGate;
 uniform float uFlash;
 uniform float uSilhouette;
 uniform float uLightingScale;
@@ -165,11 +172,27 @@ void main() {
   // being a line and starts being the soft dark gradient this pass replaced.
   float silhouette = 1.0 - smoothstep( widthPx - 0.75, widthPx + 0.5, distPx );
 
+  // Gate on actually being near-tangent.
+  //
+  // distPx is an extrapolation: it answers "how many pixels until this surface
+  // WOULD turn away", which on a broad, gently raked flank comes back small over
+  // a very wide band even though no silhouette is anywhere near. Measured on
+  // Vera's shadow-side flank, an ungated version darkened a 15 px band by 60%
+  // — a painted shadow, not a line. Requiring the surface to be genuinely close
+  // to edge-on bounds the pass to real edges.
+  silhouette *= smoothstep( uFacingGate, uFacingGate * 0.3, facing );
+
   // Normal discontinuity: a fold that never turns away from the eye, so neither
   // the hull nor the facing term above can see it at all. Already a per-pixel
   // angular rate, so it needs no further screen-space normalisation.
+  //
+  // Suppressed where the surface is raked, because there the term above already
+  // owns the line and a raked smooth flank produces a large normal gradient for
+  // reasons that have nothing to do with a fold.
   float bend = length( fwidth( n ) );
-  float crease = smoothstep( uCreaseThreshold, uCreaseThreshold * 2.4, bend ) * uCreaseGain;
+  float crease = smoothstep( uCreaseThreshold, uCreaseThreshold * 2.4, bend )
+    * uCreaseGain
+    * smoothstep( uFacingGate * 0.7, uFacingGate * 1.8, facing );
 
   float ink = saturate( max( silhouette, crease ) ) * uStrength * uLightingScale;
 
@@ -219,6 +242,7 @@ export class CreaseInkMaterial extends THREE.ShaderMaterial implements NPRMateri
         uOcclusionScale: { value: opts.occlusionScale ?? DEFAULTS.occlusionScale },
         uCreaseThreshold: { value: opts.creaseThreshold ?? DEFAULTS.creaseThreshold },
         uCreaseGain: { value: opts.creaseGain ?? DEFAULTS.creaseGain },
+        uFacingGate: { value: opts.facingGate ?? DEFAULTS.facingGate },
         uFlash: { value: 0 },
         uSilhouette: { value: 0 },
         uLightingScale: { value: 1 },
@@ -270,29 +294,35 @@ export class CreaseInkMaterial extends THREE.ShaderMaterial implements NPRMateri
 }
 
 /**
- * Ink tint for a surface, as a multiplier.
+ * Ink tint for a surface, as a **linear-light** multiplier.
  *
- * A flat multiplier would darken every hue by the same amount and the linework
- * would read as a grey wash. Cutting green hardest and blue least sends the
- * residue toward red-violet, so warm skin inks to plum-brown and cool cloth inks
- * to indigo, from one number.
+ * Authored in linear rather than as a hex, because a hex would be decoded from
+ * sRGB before reaching the shader and 0x53 would arrive as 0.09 rather than the
+ * 0.33 it looks like — a factor of nearly four on how dark the line comes out.
+ * These are the numbers the multiply actually applies.
+ *
+ * A flat grey multiplier would darken every hue equally and the linework would
+ * read as a wash. Cutting green hardest and blue least sends the residue toward
+ * red-violet, so warm skin inks to plum-brown and cool cloth to indigo, from one
+ * triple per surface kind.
  */
 function tintFor(kind: string | null): THREE.Color {
+  const c = new THREE.Color();
   switch (kind) {
-    // Skin can take a deep line without going muddy, and plum on warm skin is
-    // the single most recognisable ink colour in the reference.
+    // Skin takes the deepest line, and plum on warm skin is the single most
+    // recognisable ink colour in the reference.
     case 'skin':
-      return new THREE.Color(0x53303c);
+      return c.setRGB(0.1, 0.042, 0.062, THREE.LinearSRGBColorSpace);
     case 'wrap':
-      return new THREE.Color(0x6b4c52);
+      return c.setRGB(0.2, 0.115, 0.145, THREE.LinearSRGBColorSpace);
     // Already dark; a heavy multiply here just makes a hole.
     case 'hair':
     case 'leather':
-      return new THREE.Color(0x6e5560);
+      return c.setRGB(0.26, 0.17, 0.21, THREE.LinearSRGBColorSpace);
     case 'metal':
-      return new THREE.Color(0x5a5f70);
+      return c.setRGB(0.17, 0.18, 0.24, THREE.LinearSRGBColorSpace);
     default:
-      return new THREE.Color(DEFAULTS.tint);
+      return c.setRGB(0.14, 0.075, 0.105, THREE.LinearSRGBColorSpace);
   }
 }
 

@@ -19,6 +19,7 @@ import {
   type BodyPlan,
 } from './body';
 import { buildCostume } from './costume';
+import { buildHair } from './hair';
 
 /**
  * Assembles a fighter: skeleton, skinned body, NPR materials, ink.
@@ -33,6 +34,8 @@ export interface BuildCharacterOptions extends BodyMeshOptions {
   outlines?: boolean;
   /** Dress the fighter. Off for anatomy checks and for costume authoring itself. */
   costume?: boolean;
+  /** Give the fighter hair. Off for anatomy checks and for hair authoring itself. */
+  hair?: boolean;
 }
 
 export interface BuiltCharacter extends CharacterRig {
@@ -134,9 +137,11 @@ export function buildCharacter(def: FighterDef, opts: BuildCharacterOptions = {}
   };
 
   if (opts.outlines !== false) rig.outlines = addOutlines(root);
-  // After the ink pass, not before: `buildCostume` re-runs `addOutlines`, which
-  // skips anything already inked, so each garment gets its own line and the body
-  // is not double-shelled.
+  // After the ink pass, not before: `buildCostume` and `buildHair` ink their own
+  // meshes, and `addOutlines` skips anything already inked. Running them after
+  // means each garment and each loc gets its own line and the body is not
+  // double-shelled.
+  if (opts.hair !== false) buildHair(rig, def);
   if (opts.costume !== false) buildCostume(rig, def);
 
   return rig;

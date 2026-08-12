@@ -35,12 +35,15 @@ import {
  * The NPR shader divides accumulated diffuse by a reference luminance (see
  * `ToonMaterial`, `calibrateNpr`). One consequence: the fraction of that
  * reference held by the key is exactly the shade coordinate a fully key-lit
- * surface lands on. Below roughly 0.8 the lit side of a fighter stops reaching
- * its own albedo band and every skin tone reads a band too dark — pulled toward
- * its own shadow colour, which is precisely how four different skins converge.
+ * surface lands on, so it decides both whether a lit surface reaches its own
+ * albedo band *and* where on the form the terminator falls. Hand-placed rigs get
+ * this wrong in one direction only — every extra lamp inflates the denominator,
+ * the lit side drops toward its shadow colour, and four skins each pulled toward
+ * their own plum shadow end up closer together than the palette intended.
+ *
  * So the builder does not take raw intensities. It takes *relative* luminance
- * weights and renormalises them to hit `keyShare`, so a stage author can
- * recolour the rig without silently re-solving skin legibility.
+ * weights and renormalises them to hit `keyShare`, so a stage author can recolour
+ * the rig without silently re-solving skin legibility.
  *
  * ## 3. The rim is never the key's hue, and it is not in the denominator
  *
@@ -61,8 +64,8 @@ import {
  *
  * What the rim must still respect is the terminator: once a rim-lit back is
  * brighter than the ramp's toe, the backlight has become a second key and the
- * fighter has two light shapes. That bound is `MAX_RIM_WEIGHT`, and it is derived
- * from the ramp, not chosen.
+ * fighter has two light shapes. That bound is `maxRimWeight`, and it is derived
+ * from the ramp's own toe, not chosen.
  *
  * ## 4. Mood lives in the preset, structure does not
  *
@@ -118,13 +121,19 @@ export interface LightPreset {
    * Fraction of the shade reference the key must hold.
    *
    * This is the number that decides whether the roster reads. It *is* the shade
-   * coordinate a fully key-lit surface lands on, and the skin ramp's top band
-   * starts around 0.8 — so at 0.85 a lit cheek reaches its own albedo and the
-   * four authored skin tones are what the audience sees. Drop it to 0.7 and
-   * every fighter's lit side falls into the form band below, which is 12% of the
-   * way toward its shadow colour; four skins pulled 12% toward four different
-   * plum shadows is measurably closer together than the palette intended, and
-   * that is the whole "they all look the same" failure.
+   * coordinate a fully key-lit surface lands on, so it does two jobs at once:
+   *
+   * - It has to clear the ramp's top band, or a lit cheek renders part-way toward
+   *   that fighter's shadow colour instead of at their authored skin tone. 0.85
+   *   clears it on every surface preset with margin.
+   * - It positions the terminator. The shade coordinate is `keyShare · lit`, so
+   *   the ramp's toe lands at `lit = toe / keyShare` — measured against the
+   *   current skin ramp, 0.85 puts the terminator at about N·L 0.27, which is a
+   *   fighter who reads as mostly lit with one decisive shadow shape.
+   *
+   * The two pull in opposite directions above about 0.9 (the shadow shrinks to a
+   * rim of its own), which is why this is a tuned number and not a maximum. The
+   * ramp is tuned against it: see `SKIN_RAMP_TOE`.
    *
    * Only the fill and the bounce are renormalised to satisfy it. The rim is a
    * free art dial — see the header.
@@ -235,6 +244,12 @@ function hueDistance(a: THREE.Color, b: THREE.Color): number {
  * every costume and skin tone in the roster with its own hue. Colour belongs on
  * the *secondary* lamps and in the backdrop, where it separates instead of
  * flattening.
+ *
+ * `dusk` and `neon` have both been shot and measured against the roster with
+ * `tools/lighting/compare.py`; `noir` and `noon` have not, so their
+ * `nprSaturation` in particular is an estimate. Measure before shipping a stage
+ * on either — the structural invariants hold by construction, but chroma
+ * pre-compensation depends on where the tone curve lands and that is per-mood.
  */
 export const LIGHT_PRESETS = {
   /** Bootstrap / default: late dusk, warm sun off-frame, cold sky behind. */
@@ -243,11 +258,11 @@ export const LIGHT_PRESETS = {
     note: 'Warm low sun from front-left, cold skylight rim from behind-right.',
     key: { color: 0xffeedc, weight: 1, azimuth: -38, elevation: 44 },
     fill: { color: 0x7fa0dc, weight: 0.16, azimuth: 62, elevation: 16 },
-    rim: { color: 0x9fd6ff, weight: 0.56, azimuth: 158, elevation: 34 },
+    rim: { color: 0x9fd6ff, weight: 0.44, azimuth: 158, elevation: 34 },
     bounce: { color: 0xc08a5c, weight: 0.13, azimuth: 8, elevation: -30 },
-    ambient: { sky: 0x46648f, ground: 0x3d2a1c, intensity: 0.38 },
+    ambient: { sky: 0x46648f, ground: 0x3d2a1c, intensity: 0.30 },
     keyShare: 0.85,
-    keyLuminance: 2.1,
+    keyLuminance: 1.9,
     nprSaturation: 1.02,
   },
 
@@ -257,7 +272,7 @@ export const LIGHT_PRESETS = {
     note: 'Near-white hard key almost overhead, steel rim, almost no fill.',
     key: { color: 0xfff4e8, weight: 1, azimuth: -26, elevation: 62 },
     fill: { color: 0x6f8cc4, weight: 0.07, azimuth: 74, elevation: 8 },
-    rim: { color: 0xbfe4ff, weight: 0.58, azimuth: -168, elevation: 26 },
+    rim: { color: 0xbfe4ff, weight: 0.44, azimuth: -168, elevation: 26 },
     bounce: { color: 0x6e7c8c, weight: 0.06, azimuth: -4, elevation: -34 },
     ambient: { sky: 0x39496b, ground: 0x1b1d24, intensity: 0.3 },
     keyShare: 0.86,
@@ -271,7 +286,7 @@ export const LIGHT_PRESETS = {
     note: 'Cold key from front-right, magenta sign rim from behind-left.',
     key: { color: 0xe8f2ff, weight: 1, azimuth: 34, elevation: 40 },
     fill: { color: 0x3fb9c4, weight: 0.14, azimuth: -66, elevation: 12 },
-    rim: { color: 0xff7ad0, weight: 0.55, azimuth: -152, elevation: 30 },
+    rim: { color: 0xff7ad0, weight: 0.43, azimuth: -152, elevation: 30 },
     bounce: { color: 0x8a5ec8, weight: 0.1, azimuth: 0, elevation: -32 },
     ambient: { sky: 0x2f3f66, ground: 0x2a1830, intensity: 0.38 },
     keyShare: 0.84,
@@ -285,7 +300,7 @@ export const LIGHT_PRESETS = {
     note: 'High neutral sun, strong sky fill, pale rim. Flattest on purpose.',
     key: { color: 0xfffaf0, weight: 1, azimuth: -20, elevation: 58 },
     fill: { color: 0x9dbdf0, weight: 0.2, azimuth: 58, elevation: 22 },
-    rim: { color: 0xdff0ff, weight: 0.44, azimuth: 166, elevation: 40 },
+    rim: { color: 0xdff0ff, weight: 0.4, azimuth: 166, elevation: 40 },
     bounce: { color: 0xb8ac96, weight: 0.14, azimuth: 6, elevation: -28 },
     ambient: { sky: 0x86a8dd, ground: 0x50412e, intensity: 0.6 },
     keyShare: 0.83,
@@ -313,15 +328,35 @@ const MIN_RIM_HUE_SEPARATION = 35;
 const RIM_BACKFEED = 0.32;
 
 /**
+ * The skin ramp's terminator position, mirrored from `ToonMaterial`'s skin preset.
+ *
+ * This rig and that ramp are coupled and there is no way around it: the shader's
+ * shade coordinate is `keyShare · lit`, so `keyShare` decides *where on the form*
+ * the ramp's toe falls. Raising the key share slides the terminator round toward
+ * the back; the ramp's `toe` and `wrap` are tuned against a particular share.
+ * Change either and re-shoot the lineup — a 0.1 move in key share is worth
+ * several degrees of terminator angle.
+ */
+const SKIN_RAMP_TOE = 0.27;
+
+/**
+ * Safety factor on the rim bound below. The bound is the point of failure, not a
+ * target, and the shader's specular and translucency terms both ride on top of
+ * the diffuse this bound is computed from.
+ */
+const RIM_HEADROOM = 0.8;
+
+/**
  * Largest rim weight, relative to the key, that still reads as a backlight.
  *
- * Derived rather than chosen: a rim-lit back lands at `rim²/reference` on the
- * shade coordinate, and once that passes the ramp's toe (0.34 on skin) the back
- * of the fighter is in a *lit* band. At that point the character has two light
- * shapes and no readable form — the exact mistake of turning the rim up until it
- * "pops".
+ * Derived, not chosen. A back fully facing the rim lands on the shade coordinate
+ * at `rimWeight² · keyShare`; once that passes the ramp's toe, the back of the
+ * fighter is in a *lit* band and the character has two light shapes and no
+ * readable form. That is the failure mode of turning the rim up until it "pops".
  */
-const MAX_RIM_WEIGHT = 0.6;
+function maxRimWeight(keyShare: number): number {
+  return RIM_HEADROOM * Math.sqrt(SKIN_RAMP_TOE / Math.max(keyShare, 1e-3));
+}
 
 function resolvePreset(opts: FightRigOptions): LightPreset {
   const base: LightPreset =
@@ -371,14 +406,15 @@ export function buildFightRig(opts: FightRigOptions = {}): FightRig {
     );
   }
 
+  const rimCeiling = maxRimWeight(preset.keyShare);
   let rimWeight = preset.rim.weight;
-  if (rimWeight > MAX_RIM_WEIGHT) {
+  if (rimWeight > rimCeiling) {
     console.warn(
       `[lighting] preset "${preset.name}": rim weight ${rimWeight.toFixed(2)} exceeds ` +
-        `${MAX_RIM_WEIGHT}; a backlight this strong crosses the ramp's terminator and ` +
-        `becomes a second key. Clamped.`,
+        `${rimCeiling.toFixed(2)} for a key share of ${preset.keyShare}; a backlight this ` +
+        `strong crosses the ramp's terminator and becomes a second key. Clamped.`,
     );
-    rimWeight = MAX_RIM_WEIGHT;
+    rimWeight = rimCeiling;
   }
 
   // Renormalise fill and bounce so the key lands on `keyShare` of the reference.

@@ -20,13 +20,31 @@ number:
 import math
 import sys
 
-from measure_import import analyse, to_lab, FIGHTERS, AUTHORED  # noqa: F401
+import importlib.util
+import pathlib
+
+# Loaded by path because the sibling module's name has a hyphen in it, which is
+# the right name for a CLI tool and an impossible one for `import`.
+_spec = importlib.util.spec_from_file_location(
+    'measure_skin', pathlib.Path(__file__).with_name('measure-skin.py')
+)
+_m = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_m)
+analyse, to_lab, FIGHTERS, AUTHORED = _m.analyse, _m.to_lab, _m.FIGHTERS, _m.AUTHORED
+
 
 def main():
     if len(sys.argv) < 3:
         print(__doc__)
         return 2
     before, after = sys.argv[1], sys.argv[2]
+    # Two spaces, because they answer different questions. The delivered frame is
+    # what a viewer sees, vignette included. Dividing the vignette back out is
+    # what isolates the *light rig*: the lineup puts two fighters at the frame
+    # edge, and comparing them to the two in the middle through a lens falloff
+    # measures the lens, not the lighting.
+    raw = '--raw' in sys.argv
+    print(f'space: {"delivered frame (vignette included)" if raw else "vignette-compensated (rig only)"}')
 
     authored = {f: to_lab([((h >> s) & 255) / 255 for s in (16, 8, 0)]) for f, h in AUTHORED.items()}
     pairs = [(a, b) for i, a in enumerate(FIGHTERS) for b in FIGHTERS[i + 1:]]
@@ -37,7 +55,7 @@ def main():
 
     rows = {}
     for label, path in (('before', before), ('after', after)):
-        rows[label] = analyse(path)
+        rows[label] = analyse(path, compensate_vignette=not raw)
 
     fid = {'before': [], 'after': []}
     for f in FIGHTERS:
@@ -77,7 +95,12 @@ def main():
 
     # Clipping: a channel pinned at 255 has thrown away both hue and form, and it
     # is the mechanism by which two different warm skins become the same orange.
+    # Only meaningful on the delivered frame — the vignette compensation divides
+    # values up and would report clipping that no viewer ever sees.
     print()
+    if not raw:
+        print('clipping   (only measured on the delivered frame; pass --raw)')
+        return 0
     for label in ('before', 'after'):
         pinned = {f: rows[label][f]['bandLit']['rgb255'][0] for f in FIGHTERS}
         hot = max(pinned.values())

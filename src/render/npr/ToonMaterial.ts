@@ -313,13 +313,19 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     // to 7.4° with Kai and Vera 0.5° apart. The strength comes back most of the
     // way; what does not come back is the width — a 0.6 edge is a line near the
     // silhouette rather than a 51° wash across the form.
-    rim: 0.6,
+    rim: 0.45,
     rimSharp: 1.15,
     rimEdge: 0.6,
     rimSoft: 0.045,
     rimShadow: 0.75,
     terminatorNoise: 0.007,
     noiseScale: 26,
+    // Trimmed because the ambient lift is multiplicative on the hemisphere's
+    // *ground* colour, which on this rig is a warm 0x3d2a1c pointing up into every
+    // downward-facing surface — i.e. into the shadow band. Davi's shadow measured
+    // V48.7 against a lit V63.8 with the old value: a 15-point terminator, which
+    // is not a two-tone read.
+    ambient: 0.38,
     lightTint: 0.24,
     outlineWidth: 0.9,
     // Flesh shadow goes plum rather than straight to blue — blood under the
@@ -328,8 +334,17 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     shadowShift: 0.78,
     skylight: 0.11,
     accentShadow: 0.11,
-    minCool: 0.13,
-    shadowLift: 0.24,
+    minCool: 0.16,
+    // The load-bearing term, and the reason it is this high. A stage rig is not
+    // this module's to control: the bootstrap rig gained a warm bounce lamp
+    // (0xc08a5c from below) and a warm ground ambient while this work was in
+    // flight, and both feed straight into the shadow band. Measured against that
+    // rig, the pre-change shader still failed the cooler-in-shadow test on 3 of 4
+    // fighters even though the same rig change had turned the *rim* cool — a warm
+    // term anywhere in the rig will find the shadow. This tint is applied after
+    // the ramp and keyed to the shadow band, so it is the one cooling term no
+    // lamp can outvote.
+    shadowLift: 0.38,
     coreTint: 1.15,
     aaClamp: 0.012,
     specTint: 0.55,
