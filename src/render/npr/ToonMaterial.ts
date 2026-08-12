@@ -160,11 +160,6 @@ interface KindPreset {
    * cool once the rig's warm lamps have added themselves back on.
    */
   shadowLift: number;
-  /**
-   * Strength of the core-shadow multiplier. Turned down for surfaces whose
-   * darkest band covers a large area — see `coreShadowTint`.
-   */
-  coreTint: number;
 
   // --- value control -----------------------------------------------------
   /** Band the lit albedo is compressed into. Null leaves the albedo alone. */
@@ -239,7 +234,6 @@ const BASE: KindPreset = {
   accentShadow: 0.1,
   minCool: 0.12,
   shadowLift: 0.18,
-  coreTint: 1,
 
   litBand: null,
   shadowBand: null,
@@ -330,7 +324,6 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     accentShadow: 0.11,
     minCool: 0.13,
     shadowLift: 0.24,
-    coreTint: 1.15,
     aaClamp: 0.012,
     specTint: 0.55,
     // Defect 4. Davi's lit chest measured V44 against Vera's and Kai's shadows
@@ -567,9 +560,6 @@ const KINDS: Record<SurfaceKind, Partial<KindPreset>> = {
     accentShadow: 0,
     minCool: 0.03,
     shadowLift: 0.06,
-    // The stage's darkest band covers half the frame; at full strength the core
-    // multiplier turned the receding floor into grey mud (S66/V29 -> S10/V16).
-    coreTint: 0.3,
     aaClamp: 0.05,
   },
 };
@@ -1141,7 +1131,7 @@ export class ToonMaterial extends THREE.ShaderMaterial implements NPRMaterial {
         {
           uColor: { value: color },
           uShadowColor: { value: shadow },
-          uCoreTint: { value: coreShadowTint(shadow, p.coreTint) },
+          uCoreTint: { value: coreShadowTint(shadow) },
           uSSSColor: { value: sss },
           uRimColor: { value: new THREE.Color(opts.rimColor ?? 0xffd3a8) },
           uSpecColor: { value: spec },
@@ -1282,7 +1272,7 @@ export class ToonMaterial extends THREE.ShaderMaterial implements NPRMaterial {
     if (amount !== undefined) this.accentAmount = THREE.MathUtils.clamp(amount, 0, 1);
     const shadow = deriveShadow(this.litColor, this.shadowSeed.clone(), this.p, this.accent, this.accentAmount);
     (this.uniforms.uShadowColor.value as THREE.Color).copy(shadow);
-    (this.uniforms.uCoreTint.value as THREE.Color).copy(coreShadowTint(shadow, this.p.coreTint));
+    (this.uniforms.uCoreTint.value as THREE.Color).copy(coreShadowTint(shadow));
   }
 
   /** Colour of the sky this surface's shadow band is tinted toward. */

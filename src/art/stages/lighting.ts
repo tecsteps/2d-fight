@@ -32,22 +32,37 @@ import {
  *
  * ## 2. The key owns the terminator
  *
- * The NPR shader divides accumulated diffuse by the rig's total *squared*
- * luminance (see `ToonMaterial`, `calibrateNpr`). One consequence: the fraction
- * of that total held by the key is exactly the shade coordinate a fully key-lit
- * surface lands on. Below roughly 0.7 the lit side of a fighter stops reaching
- * its own albedo band and every costume starts reading a band too dark. So the
- * builder does not take raw intensities — it takes *relative* luminance weights
- * and renormalises them to hit `keyShare`. A stage author can then push the rim
- * or recolour the fill without silently re-solving skin legibility.
+ * The NPR shader divides accumulated diffuse by a reference luminance (see
+ * `ToonMaterial`, `calibrateNpr`). One consequence: the fraction of that
+ * reference held by the key is exactly the shade coordinate a fully key-lit
+ * surface lands on. Below roughly 0.8 the lit side of a fighter stops reaching
+ * its own albedo band and every skin tone reads a band too dark — pulled toward
+ * its own shadow colour, which is precisely how four different skins converge.
+ * So the builder does not take raw intensities. It takes *relative* luminance
+ * weights and renormalises them to hit `keyShare`, so a stage author can
+ * recolour the rig without silently re-solving skin legibility.
  *
- * ## 3. The rim is never the key's hue
+ * ## 3. The rim is never the key's hue, and it is not in the denominator
  *
  * Silhouette separation is the rim's whole job, and two warm lights from
  * opposite sides produce a warm edge on a warm body: no separation, just a
  * brighter body. Presets are checked at build time for hue distance and the
  * preset table documents the pairing. Warm key / cool rim is the default because
  * it is what KOF XIII does.
+ *
+ * The rim is also almost entirely **excluded from the shade reference**, and that
+ * is a correctness fix rather than a cheat. `calibrateNpr` sums every lamp, so a
+ * strong backlight inflates the denominator and darkens the *front* of every
+ * fighter — the front, which the backlight cannot reach by construction. Paying
+ * for light that never arrives is what forces the choice between "the rim reads"
+ * and "the roster reads". Accounting for the rim at `RIM_BACKFEED` of its
+ * luminance — the fraction the shader's wrapped lambert actually carries around
+ * onto a three-quarter-facing surface — lets a stage have both.
+ *
+ * What the rim must still respect is the terminator: once a rim-lit back is
+ * brighter than the ramp's toe, the backlight has become a second key and the
+ * fighter has two light shapes. That bound is `MAX_RIM_WEIGHT`, and it is derived
+ * from the ramp, not chosen.
  *
  * ## 4. Mood lives in the preset, structure does not
  *
@@ -100,7 +115,7 @@ export interface LightPreset {
   ambient: AmbientSpec;
 
   /**
-   * Fraction of the rig's squared-luminance total the key must hold.
+   * Fraction of the shade reference the key must hold.
    *
    * This is the number that decides whether the roster reads. It *is* the shade
    * coordinate a fully key-lit surface lands on, and the skin ramp's top band
@@ -110,6 +125,9 @@ export interface LightPreset {
    * way toward its shadow colour; four skins pulled 12% toward four different
    * plum shadows is measurably closer together than the palette intended, and
    * that is the whole "they all look the same" failure.
+   *
+   * Only the fill and the bounce are renormalised to satisfy it. The rim is a
+   * free art dial — see the header.
    */
   keyShare: number;
   /**
@@ -167,8 +185,11 @@ export interface FightRig {
    * Publishes the rig to the NPR pipeline: rim direction, chroma
    * pre-compensation and the shade-coordinate reference. Call once after the
    * stage is assembled, and again if a light is retuned at runtime.
+   *
+   * Pass the scene root to also have it audited for lights this rig does not
+   * control — the positional-light trap in invariant 1.
    */
-  apply(scene: THREE.Object3D): void;
+  apply(scene?: THREE.Object3D): void;
 }
 
 const DEG = Math.PI / 180;
@@ -222,12 +243,12 @@ export const LIGHT_PRESETS = {
     note: 'Warm low sun from front-left, cold skylight rim from behind-right.',
     key: { color: 0xffeedc, weight: 1, azimuth: -38, elevation: 44 },
     fill: { color: 0x7fa0dc, weight: 0.16, azimuth: 62, elevation: 16 },
-    rim: { color: 0x9fd6ff, weight: 0.47, azimuth: 158, elevation: 34 },
+    rim: { color: 0x9fd6ff, weight: 0.56, azimuth: 158, elevation: 34 },
     bounce: { color: 0xc08a5c, weight: 0.13, azimuth: 8, elevation: -30 },
     ambient: { sky: 0x46648f, ground: 0x3d2a1c, intensity: 0.38 },
     keyShare: 0.85,
-    keyLuminance: 1.75,
-    nprSaturation: 1.12,
+    keyLuminance: 2.1,
+    nprSaturation: 1.02,
   },
 
   /** Interior night: hard practical overhead, cyan bounce off wet concrete. */
@@ -236,7 +257,7 @@ export const LIGHT_PRESETS = {
     note: 'Near-white hard key almost overhead, steel rim, almost no fill.',
     key: { color: 0xfff4e8, weight: 1, azimuth: -26, elevation: 62 },
     fill: { color: 0x6f8cc4, weight: 0.07, azimuth: 74, elevation: 8 },
-    rim: { color: 0xbfe4ff, weight: 0.5, azimuth: -168, elevation: 26 },
+    rim: { color: 0xbfe4ff, weight: 0.58, azimuth: -168, elevation: 26 },
     bounce: { color: 0x6e7c8c, weight: 0.06, azimuth: -4, elevation: -34 },
     ambient: { sky: 0x39496b, ground: 0x1b1d24, intensity: 0.3 },
     keyShare: 0.86,
@@ -250,7 +271,7 @@ export const LIGHT_PRESETS = {
     note: 'Cold key from front-right, magenta sign rim from behind-left.',
     key: { color: 0xe8f2ff, weight: 1, azimuth: 34, elevation: 40 },
     fill: { color: 0x3fb9c4, weight: 0.14, azimuth: -66, elevation: 12 },
-    rim: { color: 0xff7ad0, weight: 0.46, azimuth: -152, elevation: 30 },
+    rim: { color: 0xff7ad0, weight: 0.55, azimuth: -152, elevation: 30 },
     bounce: { color: 0x8a5ec8, weight: 0.1, azimuth: 0, elevation: -32 },
     ambient: { sky: 0x2f3f66, ground: 0x2a1830, intensity: 0.38 },
     keyShare: 0.84,
@@ -264,7 +285,7 @@ export const LIGHT_PRESETS = {
     note: 'High neutral sun, strong sky fill, pale rim. Flattest on purpose.',
     key: { color: 0xfffaf0, weight: 1, azimuth: -20, elevation: 58 },
     fill: { color: 0x9dbdf0, weight: 0.2, azimuth: 58, elevation: 22 },
-    rim: { color: 0xdff0ff, weight: 0.4, azimuth: 166, elevation: 40 },
+    rim: { color: 0xdff0ff, weight: 0.44, azimuth: 166, elevation: 40 },
     bounce: { color: 0xb8ac96, weight: 0.14, azimuth: 6, elevation: -28 },
     ambient: { sky: 0x86a8dd, ground: 0x50412e, intensity: 0.6 },
     keyShare: 0.83,
@@ -277,6 +298,30 @@ export type LightPresetName = keyof typeof LIGHT_PRESETS;
 
 /** Minimum hue separation between key and rim, in degrees. Below this they muddy. */
 const MIN_RIM_HUE_SEPARATION = 35;
+
+/**
+ * Fraction of the rim's luminance that is charged to the shade reference.
+ *
+ * A backlight cannot light a front-facing surface: with the skin ramp's wrap of
+ * 0.24, a normal pointing at the camera gets `(N·L + wrap)/(1 + wrap) < 0` from a
+ * lamp behind it and contributes nothing. What it *does* reach is the shoulder,
+ * the outer arm, the side of the jaw — three-quarter-facing surfaces where the
+ * wrap carries roughly a third of it. Charging the reference for the full lamp
+ * darkens the whole front of every fighter to pay for light that only lands on
+ * the edges.
+ */
+const RIM_BACKFEED = 0.32;
+
+/**
+ * Largest rim weight, relative to the key, that still reads as a backlight.
+ *
+ * Derived rather than chosen: a rim-lit back lands at `rim²/reference` on the
+ * shade coordinate, and once that passes the ramp's toe (0.34 on skin) the back
+ * of the fighter is in a *lit* band. At that point the character has two light
+ * shapes and no readable form — the exact mistake of turning the rim up until it
+ * "pops".
+ */
+const MAX_RIM_WEIGHT = 0.6;
 
 function resolvePreset(opts: FightRigOptions): LightPreset {
   const base: LightPreset =
@@ -299,10 +344,10 @@ function resolvePreset(opts: FightRigOptions): LightPreset {
  * Builds a key/fill/rim/bounce rig sized to the fighting plane.
  *
  * The weights in the preset are *relative*; what comes out is Three intensities
- * chosen so the key holds exactly `keyShare` of the rig's squared-luminance
- * total. That means a preset can be recoloured freely — including to a much
- * darker rim colour, which would otherwise quietly hand the key more share and
- * blow out the lit side — without re-deriving anything.
+ * chosen so the key holds exactly `keyShare` of the shade reference. That means a
+ * preset can be recoloured freely — including to a much darker rim colour, which
+ * would otherwise quietly hand the key more share and blow out the lit side —
+ * without re-deriving anything.
  */
 export function buildFightRig(opts: FightRigOptions = {}): FightRig {
   const preset = resolvePreset(opts);
@@ -326,18 +371,28 @@ export function buildFightRig(opts: FightRigOptions = {}): FightRig {
     );
   }
 
-  // Renormalise the secondary weights so the key lands on `keyShare`. The share
-  // is over *squared* luminance because that is the space the NPR shade
-  // coordinate lives in — see the header.
-  const secondary = [preset.fill.weight, preset.rim.weight, preset.bounce.weight];
-  const sumSq = secondary.reduce((a, w) => a + w * w, 0);
-  const wanted = 1 / THREE.MathUtils.clamp(preset.keyShare, 0.4, 0.98) - 1;
-  const scale = sumSq > 1e-9 ? Math.sqrt(wanted / sumSq) : 0;
+  let rimWeight = preset.rim.weight;
+  if (rimWeight > MAX_RIM_WEIGHT) {
+    console.warn(
+      `[lighting] preset "${preset.name}": rim weight ${rimWeight.toFixed(2)} exceeds ` +
+        `${MAX_RIM_WEIGHT}; a backlight this strong crosses the ramp's terminator and ` +
+        `becomes a second key. Clamped.`,
+    );
+    rimWeight = MAX_RIM_WEIGHT;
+  }
+
+  // Renormalise fill and bounce so the key lands on `keyShare` of the reference.
+  // Squared luminance, because that is the space the NPR shade coordinate lives
+  // in; and the rim enters only at `RIM_BACKFEED` — see the header.
+  const rimCharge = (rimWeight * RIM_BACKFEED) ** 2;
+  const budget = 1 / THREE.MathUtils.clamp(preset.keyShare, 0.4, 0.98) - 1;
+  const sumSq = preset.fill.weight ** 2 + preset.bounce.weight ** 2;
+  const scale = sumSq > 1e-9 ? Math.sqrt(Math.max(budget - rimCharge, 0) / sumSq) : 0;
 
   const targetLuminance = {
     key: preset.keyLuminance,
     fill: preset.keyLuminance * preset.fill.weight * scale,
-    rim: preset.keyLuminance * preset.rim.weight * scale,
+    rim: preset.keyLuminance * rimWeight,
     bounce: preset.keyLuminance * preset.bounce.weight * scale,
   };
 
@@ -396,7 +451,10 @@ export function buildFightRig(opts: FightRigOptions = {}): FightRig {
     bounce: lightLuminance(bounce.color) * bounce.intensity,
   };
   const reference =
-    weights.key ** 2 + weights.fill ** 2 + weights.rim ** 2 + weights.bounce ** 2;
+    weights.key ** 2 +
+    weights.fill ** 2 +
+    (weights.rim * RIM_BACKFEED) ** 2 +
+    weights.bounce ** 2;
 
   const rimDirection = placementToDirection(preset.rim);
 
@@ -412,17 +470,66 @@ export function buildFightRig(opts: FightRigOptions = {}): FightRig {
     reference,
     keyShare: weights.key ** 2 / Math.max(reference, 1e-9),
 
-    apply(scene: THREE.Object3D): void {
+    apply(scene?: THREE.Object3D): void {
       // The drawn rim highlight is a *painted* effect keyed off this direction,
       // not the rim lamp's diffuse. Forgetting it is why a stage sometimes has a
       // rim light shining from the left and rim highlights drawn on the right.
       setNprRimDirection(rimDirection);
       setNprSaturation(preset.nprSaturation);
-      // Measured last, so it sees the final intensities including anything a
-      // caller retuned after the build.
-      calibrateNpr(scene);
+      publishLightReference(reference);
+      if (scene) auditScene(scene, preset.name);
     },
   };
+}
+
+/**
+ * Installs this rig's shade reference across the NPR pipeline.
+ *
+ * `calibrateNpr` is not used, and that is the point: it sums every lamp in the
+ * scene, which charges the front of every fighter for the backlight behind them.
+ * The rig has already computed the reference it wants — key + fill + bounce, plus
+ * the rim at `RIM_BACKFEED` — so it publishes that number instead and turns the
+ * lazy auto-calibration off so nothing overwrites it on the first draw.
+ *
+ * Materials built *after* this call pick the value up from `NPR_TUNING`; ones
+ * already alive need the uniform written directly.
+ */
+function publishLightReference(reference: number): void {
+  NPR_TUNING.lightReference = reference;
+  NPR_TUNING.autoCalibrate = false;
+  for (const material of nprMaterials()) {
+    // `NPRMaterial` is the narrow gameplay-facing contract and does not admit to
+    // being a ShaderMaterial. Every implementation is one; the guard below covers
+    // any future one that is not.
+    const uniforms = (material as unknown as THREE.ShaderMaterial).uniforms;
+    if (uniforms?.uLightReference) uniforms.uLightReference.value = reference;
+  }
+}
+
+/**
+ * Warns about lights in the scene that this rig does not control.
+ *
+ * Specifically point and spot lights, which are the invariant this whole file
+ * exists to hold: they fall off with distance, Three cannot exclude the fighters
+ * from them, and so they make a fighter's colour depend on where they are
+ * standing. It is a very easy mistake to make — a warm pool light on the floor is
+ * the obvious way to ground a stage, and it looks correct right up until you
+ * measure two fighters and find the one nearer the middle is a different person.
+ */
+function auditScene(scene: THREE.Object3D, presetName: string): void {
+  const offenders: string[] = [];
+  scene.traverse((o) => {
+    const l = o as THREE.PointLight & THREE.SpotLight;
+    if (l.isPointLight || l.isSpotLight) offenders.push(l.name || l.type);
+  });
+  if (offenders.length) {
+    console.warn(
+      `[lighting] preset "${presetName}": positional lights in the fight plane ` +
+        `(${offenders.join(', ')}). These light the fighters by distance, so the same ` +
+        `fighter will be a different colour at midscreen and in the corner. Use ` +
+        `additive geometry for stage pools instead — see bootstrap.ts.`,
+    );
+  }
 }
 
 /**

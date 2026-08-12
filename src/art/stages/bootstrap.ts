@@ -116,12 +116,12 @@ function makeFloor(): THREE.Mesh {
     const back = THREE.MathUtils.smoothstep(-z, 1, depth * 0.42);
     const wing = THREE.MathUtils.smoothstep(Math.abs(x), 5, width * 0.4);
     const near = THREE.MathUtils.smoothstep(z, 2, depth * 0.35);
-    const v = (1 - back * 0.82) * (1 - wing * 0.55) * (1 - near * 0.35);
+    const v = (1 - back * 0.88) * (1 - wing * 0.55) * (1 - near * 0.3);
     shade[i * 3] = v;
     shade[i * 3 + 1] = v * 0.985;
     // Slightly bluer as it recedes: cheap aerial perspective, and it puts the
     // one cool note in the frame exactly where the warm pool is not.
-    shade[i * 3 + 2] = v * (0.95 + back * 0.35);
+    shade[i * 3 + 2] = v * (0.95 + back * 0.12);
   }
   geo.setAttribute('color', new THREE.BufferAttribute(shade, 3));
 
@@ -154,7 +154,7 @@ function makeFloorPool(): THREE.Mesh {
     depthWrite: false,
     blending: THREE.AdditiveBlending,
     uniforms: {
-      uColor: { value: new THREE.Color(0x8a4a22) },
+      uColor: { value: new THREE.Color(0x9d5526) },
     },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
@@ -198,9 +198,9 @@ export function buildBootstrapStage(opts: BootstrapStageOptions = {}): Bootstrap
   world.add(rig.group);
 
   const stage: BootstrapStage = { background, world, foreground, rig };
-  // `apply` has to see the assembled scene graph to measure the rig, and the
-  // caller has not parented us yet — the group itself is enough, since every
-  // lamp lives under it.
-  rig.apply(rig.group);
+  // The world group is what gets audited: anything a stage adds to the fighting
+  // plane is in here, and a positional light among it is the one mistake that
+  // silently recolours fighters by where they stand.
+  rig.apply(world);
   return stage;
 }
