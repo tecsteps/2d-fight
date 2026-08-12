@@ -878,7 +878,7 @@ function buildHand(P: Plan, m: RigMetrics, elbow: THREE.Vector3, wrist: THREE.Ve
   // is unambiguously one mass, then unambiguously four, and the crossing is
   // over in a few millimetres.
   const kx = [-0.735, -0.245, 0.245, 0.735];
-  const tipx = [-1.2, -0.4, 0.45, 1.25];
+  const tipx = [-1.24, -0.42, 0.47, 1.3];
   const len = [0.41, 0.455, 0.43, 0.375];
   const rad = [1.0, 1.02, 0.98, 0.92];
   // Knuckle t: the metacarpal heads are not level — index and pinky sit back.
@@ -894,8 +894,8 @@ function buildHand(P: Plan, m: RigMetrics, elbow: THREE.Vector3, wrist: THREE.Ve
 
     // Knuckle head, proud on the back of the hand. This is the break the
     // review asked for and it is the thing that reads first in a fist.
-    P.point('handL', at(t0 - 0.02, a0, -PT * 0.2), r0 * 1.14, {
-      sx: 1.05, sy: 0.85, sz: 1.15, n: 2.3, k: 0.006 * H,
+    P.point('handL', at(t0 - 0.02, a0, -PT * 0.28), r0 * 1.12, {
+      sx: 1.05, sy: 0.85, sz: 0.95, n: 2.3, k: 0.006 * H,
     });
     // Proximal segment, then the distal one bent into the palm at the middle
     // joint, which is what keeps a relaxed hand from reading as a rake.
@@ -930,11 +930,11 @@ function buildHand(P: Plan, m: RigMetrics, elbow: THREE.Vector3, wrist: THREE.Ve
   // `across` is very nearly the X axis, and X is the axis the mesher refines
   // around the hands. A thumb held forward instead of out would be separated
   // along Z, at the unrefined step, and would weld itself to the index finger.
-  const tA = at(0.14, -PW * 0.4, PT * 0.34);
-  const tB = at(0.42, -PW * 1.06, PT * 0.9);
-  const tC = at(0.62, -PW * 1.32, PT * 1.3);
-  const tD = at(0.76, -PW * 1.4, PT * 1.62);
-  P.seg('handL', tA, tB, FR * 0.72, FR * 0.62, { sz: 1.25, n: 2.5, ref: REF, k: 0.009 * H });
+  const tA = at(0.14, -PW * 0.4, PT * 0.36);
+  const tB = at(0.42, -PW * 1.02, PT * 1.25);
+  const tC = at(0.62, -PW * 1.26, PT * 1.8);
+  const tD = at(0.76, -PW * 1.34, PT * 2.2);
+  P.seg('handL', tA, tB, FR * 0.72, FR * 0.62, { sz: 1.25, n: 2.5, ref: REF, k: 0.007 * H });
   P.seg('handL', tB, tC, FR * 0.66, FR * 0.58, { sz: 1.35, n: 2.6, ref: REF, k: 0.004 * H });
   P.seg('handL', tC, tD, FR * 0.56, FR * 0.5, { sz: 1.4, n: 2.6, ref: REF, k: 0.0035 * H });
 }
@@ -981,9 +981,9 @@ function buildLeg(P: Plan, m: RigMetrics, j: JointMap): void {
     'thighL',
     new THREE.Vector3(th * 0.2, hip.y - m.torsoLen * 0.1, -th * 0.06),
     lerp(hip, knee, 0.52).add(new THREE.Vector3(-th * 0.06, 0, th * 0.02)),
-    th * 0.4,
-    th * 0.26,
-    { sz: 0.86, k: 0.02 * H },
+    th * 0.42,
+    th * 0.27,
+    { sz: 0.95, k: 0.026 * H },
   );
 
   P.tube({
@@ -1083,13 +1083,15 @@ function buildFoot(P: Plan, m: RigMetrics, ankle: THREE.Vector3): void {
   // heel. Cheap, and it is what fills the hollow either side of it.
   P.seg(
     'footL',
-    new THREE.Vector3(ax, A * 2.05, az - FL * 0.145),
-    new THREE.Vector3(ax, A * 0.85, az - FL * 0.185),
-    AR * 0.6,
-    AR * 0.78,
-    // Deep rather than flat: at 0.62 the ridge was thinner front-to-back than
-    // one grid cell and the mesher lost stretches of it.
-    { sx: 0.9, sz: 0.95, k: 0.012 * H },
+    new THREE.Vector3(ax, A * 2.05, az - FL * 0.135),
+    new THREE.Vector3(ax, A * 0.8, az - FL * 0.17),
+    AR * 0.62,
+    AR * 0.95,
+    // Deep rather than flat, and deliberately overlapping the tarsus in front
+    // of it: run as a thin flap it is joined to the shin above and the heel
+    // below but not to the block between, and those three joins close a ring
+    // — a handle, on a surface that has to stay genus 0.
+    { sx: 0.9, sz: 1.3, k: 0.014 * H },
   );
 
   // The body of the foot: heel to the ball, arched. Heights are fractions of
@@ -1120,10 +1122,10 @@ function buildFoot(P: Plan, m: RigMetrics, ankle: THREE.Vector3): void {
   // Toes. Big toe distinct, the other four merged into a scalloped group —
   // which is what a toe reads as at 4 px, and is honest about it: five fully
   // separated toes at this scale is noise that the ink pass then draws.
-  const toeA = [-0.6, -0.15, 0.16, 0.42, 0.64];
+  const toeA = [-0.58, -0.16, 0.12, 0.36, 0.56];
   const toeR = [0.33, 0.21, 0.195, 0.175, 0.15];
-  const toeL = [1.0, 0.97, 0.9, 0.79, 0.64];
-  const toeK = [0.004, 0.0028, 0.0028, 0.0028, 0.0028];
+  const toeL = [1.0, 0.98, 0.92, 0.83, 0.7];
+  const toeK = [0.005, 0.005, 0.005, 0.005, 0.005];
   const baseZ = az + FL * 0.44;
   for (let t = 0; t < 5; t++) {
     const r0 = HW * toeR[t];
@@ -1229,7 +1231,7 @@ const EDGE = [
 function surfaceNets(plan: BodyPlan, density: number): RawMesh {
   const { prims, metrics: m, joints: j } = plan;
   const H = m.height;
-  const step = H / 56 / density;
+  const step = H / 54 / density;
 
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;

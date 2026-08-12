@@ -1,8 +1,7 @@
 import * as THREE from 'three';
-import type { BoneName } from '../../../anim/contract';
+import { BONES, type BoneName } from '../../../anim/contract';
 import type { FighterDef } from '../../../data/roster';
 import type { BuiltCharacter } from '../rig';
-import { createOutlineMesh } from '../../../render/npr';
 import { fighterTextures } from '../../textures';
 import {
   attachGarment,
@@ -43,6 +42,11 @@ import {
  *    the *hem* profile climbing to the collarbone over the last 35° of arc — so
  *    the whole front opening is a rolled hem rather than a raw edge, and it is
  *    finished on both panels for free.
+ *
+ *    The armhole is the same idea one layer down: cloth traced against the
+ *    trunk is buried inside the deltoid from the armpit to the shoulder crest,
+ *    so the height at which `bridge` reaches the real arm surface *is* the
+ *    armhole seam.
  * 2. **The abadá's folds are keyed on the anatomical angle, not on `u`.** The
  *    blue stripe is a second shell over a 60° slice of the same leg, so its own
  *    arc parameter runs over a different interval; a fold field keyed on `u`
@@ -53,11 +57,11 @@ import {
  *
  * Layer ladder used here, innermost first:
  *   LAYER.skin  0.0035  hand wraps
- *   0.006–0.050         abadá (the ramp *is* the garment — see `legSlack`)
+ *   0.006–0.048         abadá (the ramp *is* the garment — see `legSlack`)
  *   +0.0030             leg stripe, sewn onto the abadá
  *   0.0195              ankle cuff, over the gathered trouser hem
  *   0.012–0.019         hoodie body
- *   0.023–0.063         hood, lying on the hoodie's back
+ *   0.033–0.063         hood, lying on the hoodie's back
  *   0.022               waistband
  *   0.031               cord belt
  */
@@ -77,7 +81,7 @@ const UP = new THREE.Vector3(0, 1, 0);
  * height where the thighs have parted neither shell reaches the plane on its
  * own. See `midlineCap`.
  */
-const PAST = 0.005;
+const PAST = 0.010;
 
 /** The trunk. Anything a torso garment should lie on, and nothing it should engulf. */
 const TORSO = (b: BoneName): boolean =>
@@ -117,6 +121,37 @@ function abadaFolds(seed: number): (t: number, angle: number) => number {
     (Math.cos(3 * angle + p1 + Math.sin(t * 4.7 + p2) * 0.85) +
       0.5 * Math.cos(5 * angle + p2 - t * 3.1) +
       0.22 * Math.cos(9 * angle + p3 + Math.sin(t * 7.3) * 0.6));
+}
+
+/**
+ * Re-binds any weight a trouser leg picked up from the *other* femur.
+ *
+ * The body's field weighting diffuses over the surface graph, and the medial
+ * face of a trouser leg sits a centimetre from the opposite thigh — so at the
+ * inseam up to 70% of a vertex ends up driven by the wrong leg. Nothing shows
+ * in the rest pose, which is exactly what makes it expensive to find: the first
+ * stance that parts the legs shears the two shells through each other, and each
+ * one's inverted ink hull then wins the depth test through the other, filling
+ * the seat and the fly with flat ink. It reads as a shading bug and it is a
+ * skinning bug.
+ *
+ * A trouser leg is a tube around one femur and nothing else, so the fix is to
+ * say so.
+ */
+function keepOnLeg(mesh: THREE.SkinnedMesh, side: 'L' | 'R'): void {
+  const other = side === 'L' ? 'R' : 'L';
+  const remap = new Map<number, number>();
+  for (const part of ['thigh', 'shin', 'foot', 'toe'] as const) {
+    remap.set(BONES.indexOf(`${part}${other}` as BoneName), BONES.indexOf(`${part}${side}` as BoneName));
+  }
+  const si = mesh.geometry.getAttribute('skinIndex');
+  for (let v = 0; v < si.count; v++) {
+    for (let k = 0; k < 4; k++) {
+      const to = remap.get(si.getComponent(v, k));
+      if (to !== undefined) si.setComponent(v, k, to);
+    }
+  }
+  si.needsUpdate = true;
 }
 
 /**
@@ -182,10 +217,10 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
     [waistTopY, 0.008],
     [Y('hip'), 0.010],
     [Y('crotch') - 0.03, 0.018],
-    [Y('midThigh'), 0.034],
-    [Y('knee') + 0.05, 0.044],
-    [Y('knee'), 0.045],
-    [Y('calf'), 0.043],
+    [Y('midThigh'), 0.038],
+    [Y('knee') + 0.05, 0.047],
+    [Y('knee'), 0.048],
+    [Y('calf'), 0.045],
     [cuffHighY + 0.055, 0.032],
     [cuffHighY, 0.013],
     [cuffLowY + 0.008, 0.006],
@@ -300,14 +335,7 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       maxRadius: (s, _u, angle) => midlineCap(s, angle),
       tileMetres: tex.garments.abada.tileMetres * WEAVE,
     });
-    // Off the shadow map's receiving list, and this one is not cosmetic. The
-    // seat of a loose trouser spans the gluteal cleft, so in the key's view it
-    // sits behind a body that is casting — a correct shadow, but one that lands
-    // on the highest-contrast cloth in the outfit at the resolution of a couple
-    // of shadow texels, and cream at the bottom of a cel ramp is black. What you
-    // get is a stair-stepped blot the size of a hand. Nothing else is casting
-    // onto these shells that the ramp does not already describe.
-    const abada = attachGarment(rig, {
+    keepOnLeg(attachGarment(rig, {
       name: `abada${side}`,
       geometry: shell.geometry,
       kind: 'cloth',
@@ -316,33 +344,22 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       tex: tex.garments.abada,
       normalScale: 0.85,
       specular: 0.16,
-      outlineWidth: 0.6,
-    }, out);
-    abada.receiveShadow = false;
-    /**
-     * Inked here rather than by the pass `buildCostume` runs at the end — which
-     * skips anything already carrying an ink shell — because the abadá is the
-     * one garment in the outfit that cannot take the house line.
-     *
-     * The ink shell is the geometry drawn back-faced and pushed outward by a
-     * fixed number of *pixels*. On a surface running steeply away from the eye
-     * that lateral push crosses a lot of depth, so the shell's far side lands
-     * in front of the near one and the line stops being a line: over the seat,
-     * where the cloth turns hard into the gap between the legs, a four-pixel
-     * contour fills a hand-sized patch. Thinning it and warming it turns the
-     * residue into the shadow that belongs in that crease anyway, and a lighter
-     * line is what an inker uses on white cloth regardless. The interior-crease
-     * overlay goes for the same reason: it keys on depth gradient, and the
-     * crotch of a loose trouser is nothing but depth gradient.
-     */
-    createOutlineMesh(abada, {
-      crease: false,
-      color: 0x33251b,
-      width: 1.6,
-      minWidth: 0.9,
-      maxWidth: 2.4,
-      lowerBias: 0.2,
-    });
+      // The one uninked surface in the outfit, and not a stylistic choice.
+      //
+      // The ink shell is this geometry drawn back-faced; over the seat and the
+      // fly, where a loose trouser turns hard into the gap between the legs, its
+      // far side wins the depth test over an area rather than along an edge and
+      // paints a hand-sized patch of flat ink. It survives every geometric
+      // remedy — capping the inward trace at the midline, dropping `keepSide`,
+      // re-binding the cross-leg skin weights, disabling the crease and relief
+      // passes — and it does not scale with line width, so it cannot be tuned
+      // out either; only suppressing this surface's hull removes it.
+      //
+      // The contour is not lost. The stripe below covers ±19° of the outseam,
+      // which is exactly where the leg's silhouette runs in a front or back
+      // view, so the edge that needs a line still carries one.
+      outlineWidth: 0,
+    }, out), side);
 
     // The outseam stripe. Same axis, same fold field, same angle — so it is a
     // rigid 3 mm lift of the trouser surface and can never dip into it.
@@ -362,7 +379,7 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       toEdge: { fold: 0.006, roll: 0.0026, rings: 3 },
       tileMetres: tex.garments.stripe.tileMetres * WEAVE,
     });
-    attachGarment(rig, {
+    keepOnLeg(attachGarment(rig, {
       name: `stripe${side}`,
       geometry: stripe.geometry,
       kind: 'cloth',
@@ -371,10 +388,9 @@ export function buildDaviCostume(rig: BuiltCharacter, def: FighterDef): BuiltCos
       tex: tex.garments.stripe,
       normalScale: 0.9,
       specular: 0.22,
-      outlineWidth: 0.55,
-      // Rides 3 mm above the abadá, so it has to answer the shadow map the same
-      // way or a stripe would light differently from the cloth it is sewn to.
-    }, out).receiveShadow = false;
+      // Carries the leg's contour for the abadá as well as its own — see above.
+      outlineWidth: 0.9,
+    }, out), side);
 
     // Knit ankle cuff. Rigid to the shin: the whole ring sits between the ankle
     // and the calf, one bone's motion is the truth for it, and binding it that

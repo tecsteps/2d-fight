@@ -76,6 +76,16 @@ export interface Proportions {
   fem: number;
   /** Whole arm (shoulder to wrist) as a fraction of height. */
   armRatio: number;
+  /**
+   * How far outside the hip joints the feet stand at rest, as a multiple of
+   * half the hip width.
+   *
+   * A stance is a character read before it is a mechanic — a grappler plants
+   * wide and low, a capoeirista keeps a narrow base to spin off. It is also the
+   * cheapest large change to a silhouette available, because the legs are
+   * nearly half of it and no amount of costume touches them.
+   */
+  stance: number;
 }
 
 export interface FighterDef {
@@ -131,13 +141,14 @@ export const VERA: FighterDef = {
   // to a third of her height and her thighs are as wide as her waist.
   proportions: {
     height: 1.76,
-    shoulder: 0.318,
-    hip: 0.243,
-    build: 0.97,
-    legRatio: 0.468,
-    headRatio: 0.132,
+    shoulder: 0.348,
+    hip: 0.258,
+    build: 1,
+    legRatio: 0.455,
+    headRatio: 0.138,
     fem: 0.85,
-    armRatio: 0.32,
+    armRatio: 0.318,
+    stance: 1.22,
   },
   health: 1150,
   walkFwd: 0.0295,
@@ -174,14 +185,15 @@ export const DAVI: FighterDef = {
   // else's and the torso is correspondingly short — which is most of why he
   // reads as a different animal to Vera even before width is considered.
   proportions: {
-    height: 1.9,
-    shoulder: 0.224,
-    hip: 0.167,
-    build: 0.32,
-    legRatio: 0.552,
-    headRatio: 0.112,
+    height: 1.92,
+    shoulder: 0.214,
+    hip: 0.157,
+    build: 0.24,
+    legRatio: 0.562,
+    headRatio: 0.106,
     fem: 0,
-    armRatio: 0.352,
+    armRatio: 0.356,
+    stance: 0.68,
   },
   health: 980,
   walkFwd: 0.0345,
@@ -217,14 +229,15 @@ export const MALI: FighterDef = {
   // through the shoulders after Vera and with the longest legs after Davi. She
   // is small without being slight — the read a Muay Thai fighter needs.
   proportions: {
-    height: 1.66,
-    shoulder: 0.262,
-    hip: 0.216,
-    build: 0.62,
-    legRatio: 0.528,
-    headRatio: 0.129,
+    height: 1.64,
+    shoulder: 0.238,
+    hip: 0.224,
+    build: 0.5,
+    legRatio: 0.548,
+    headRatio: 0.134,
     fem: 1,
-    armRatio: 0.33,
+    armRatio: 0.316,
+    stance: 1.02,
   },
   health: 1000,
   walkFwd: 0.0315,
@@ -262,13 +275,14 @@ export const KAI: FighterDef = {
   // three deviate from.
   proportions: {
     height: 1.79,
-    shoulder: 0.25,
-    hip: 0.185,
+    shoulder: 0.254,
+    hip: 0.176,
     build: 0.56,
-    legRatio: 0.512,
-    headRatio: 0.121,
+    legRatio: 0.5,
+    headRatio: 0.119,
     fem: 0.06,
-    armRatio: 0.334,
+    armRatio: 0.342,
+    stance: 0.76,
   },
   health: 1020,
   walkFwd: 0.032,

@@ -238,7 +238,12 @@ export function rigMetrics(def: FighterDef): RigMetrics {
   // angle.
   // 1.35 palm widths, not one: the thumb reaches medially past the palm edge,
   // and it is the thumb that would touch the thigh first.
-  const need = hipJointX + thighR + palmHalf * 1.35 + H * 0.026 - armJointX;
+  // The margin itself scales with build. A heavy fighter cannot bring the arms
+  // in past their own lat and hip mass, and a lean one has no reason not to —
+  // which is the difference between a blocky silhouette with daylight either
+  // side of the torso and a single tall column.
+  const need =
+    hipJointX + thighR + palmHalf * 1.35 + H * (0.01 + 0.026 * build) - armJointX;
   const reach = upperArmLen + forearmLen * A_POSE_FOREARM_RATIO;
   const armSpread = THREE.MathUtils.clamp(
     Math.asin(THREE.MathUtils.clamp(need / reach, 0, 0.75)),
@@ -289,7 +294,11 @@ export function rigMetrics(def: FighterDef): RigMetrics {
     footHalf: footLen * 0.205,
     heelR: footLen * 0.15,
     toeLen: footLen * 0.185,
-    ankleX: hipJointX * 0.8,
+    // Authored stance, floored so the two feet cannot overlap across the
+    // midline. Davi's narrow base put his feet through each other, and two
+    // solids that intersect at the floor while their legs are already joined
+    // at the pelvis close a ring — the body came out genus 1.
+    ankleX: Math.max(hipJointX * p.stance, footLen * 0.205 * 1.35),
   };
 }
 
