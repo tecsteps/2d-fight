@@ -11,7 +11,7 @@ import type { Fighter } from './Fighter';
  */
 
 /** Body posture. Decides which guard is legal and which hit reaction plays. */
-export const enum StateType {
+export enum StateType {
   Stand = 0,
   Crouch = 1,
   Air = 2,
@@ -20,14 +20,14 @@ export const enum StateType {
 }
 
 /** What the character is doing, in the only three flavours combat cares about. */
-export const enum MoveType {
+export enum MoveType {
   Idle = 0,
   Attack = 1,
   BeingHit = 2,
 }
 
 /** Which integrator runs this frame. `None` means the state drives position itself. */
-export const enum PhysicsMode {
+export enum PhysicsMode {
   Stand = 0,
   Crouch = 1,
   Air = 2,
@@ -39,7 +39,7 @@ export const enum PhysicsMode {
  * further up the ladder once it has connected; going sideways or down needs a
  * resource (Drive Cancel) or HD mode.
  */
-export const enum AttackTier {
+export enum AttackTier {
   None = 0,
   Normal = 1,
   CommandNormal = 2,
@@ -50,7 +50,7 @@ export const enum AttackTier {
 }
 
 /** How an attack must be guarded. */
-export const enum GuardKind {
+export enum GuardKind {
   /** Blockable standing or crouching. Most attacks. */
   Mid = 0,
   /** Must be blocked crouching. Sweeps and low pokes. */
@@ -64,7 +64,7 @@ export const enum GuardKind {
 }
 
 /** The shape of the victim's reaction. Drives state choice, velocity and anim. */
-export const enum Reaction {
+export enum Reaction {
   Light = 0,
   Medium = 1,
   Heavy = 2,
@@ -81,7 +81,7 @@ export const enum Reaction {
 }
 
 /** Invulnerability bits. A window may combine them. */
-export const enum Invuln {
+export enum Invuln {
   None = 0,
   Strike = 1 << 0,
   Throw = 1 << 1,
@@ -90,7 +90,7 @@ export const enum Invuln {
   Full = Strike | Throw | Low,
 }
 
-export const enum HitOutcomeKind {
+export enum HitOutcomeKind {
   None = 0,
   Hit = 1,
   CounterHit = 2,
@@ -169,8 +169,12 @@ export interface AttackDef {
 
   /** Trade arbitration. Higher wins outright; equal trades. */
   priority: number;
-  /** May this activation connect more than once with the same victim? */
-  multiHit: boolean;
+  /**
+   * Frames between repeat hits on the same victim. 0 = the move connects once
+   * per active window, which is what almost everything wants; a spinning kick
+   * or a beam sets an interval and hits on that cadence.
+   */
+  hitInterval: number;
   /** Extra damage multiplier on counter-hit, above the global bonus. */
   counterBonus: number;
   /** Ignores the combo scaling table — reserved for the first hit of a NeoMax. */
@@ -213,10 +217,23 @@ export interface CancelRule {
   onWhiff: AttackTier;
   /** Specific states this move chains into regardless of tier (rapid-fire lights). */
   chain?: readonly number[];
-  /** Window the cancel is legal in, relative to the first active frame. */
+  /** Window the cancel is legal in, in state frames. Defaults to the active span. */
   window?: FrameWindow;
   /** May this state cancel into itself? Only true for true rapid-fire jabs. */
   self?: boolean;
+  /** Refuses even a Drive Cancel or HD cancel. Reserved for the NeoMax. */
+  locked?: boolean;
+}
+
+/** How a cancel out of the current state is being paid for. */
+export enum CancelPay {
+  No = 0,
+  /** Free — either the player has control, or the tier ladder allows it. */
+  Free = 1,
+  /** Costs half the Drive gauge. */
+  Drive = 2,
+  /** Costs HD timer. */
+  HD = 3,
 }
 
 export interface StateDef {
@@ -230,6 +247,8 @@ export interface StateDef {
   /** Frames before `next` is entered automatically. -1 = the state decides. */
   duration: number;
   next: number;
+  /** State entered when an airborne state touches the floor. */
+  landState?: number;
   /** Animation clip name handed to the animator. */
   anim: string;
   /** Facing is locked for the duration of most attacks. */

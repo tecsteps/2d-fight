@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { clamp01, mix } from './noise';
+import { clamp01, mix, smootherstep } from './noise';
 
 /**
  * CPU raster buffers used to author a texture before it becomes a GPU texture.
@@ -40,6 +40,49 @@ export class Field {
       }
     }
     return f;
+  }
+
+  /**
+   * Evaluated at a lower resolution and smoothly resampled up.
+   *
+   * The single most important optimisation in this directory. A four-octave
+   * simplex fBm at frequency 3 carries no information above about 64 samples
+   * across the tile, but evaluating it per texel at 1024² costs a million
+   * 4D simplex taps — which is how the first version of the skin generator
+   * came to take seven seconds. Broad fields (dye mottling, stains, sweat
+   * patches, drape) go through here; anything whose *structure* matters at the
+   * texel level (weaves, pores, grain, stitching) does not.
+   *
+   * Interpolation is quintic, not linear: linear upsampling leaves faint
+   * diamond creases whose second derivative is discontinuous, and the normal
+   * map is a derivative.
+   */
+  static lowRes(size: number, low: number, fn: (u: number, v: number) => number): Field {
+    const l = Math.min(size, Math.max(4, 2 ** Math.round(Math.log2(low))));
+    if (l >= size) return Field.from(size, fn);
+    return Field.from(l, fn).upsampleTo(size);
+  }
+
+  /** Quintic wrapped resample to a larger grid. */
+  upsampleTo(size: number): Field {
+    if (size <= this.size) return this;
+    const dst = new Field(size);
+    const scale = this.size / size;
+    let i = 0;
+    for (let y = 0; y < size; y++) {
+      const fy = (y + 0.5) * scale - 0.5;
+      const y0 = Math.floor(fy);
+      const ty = smootherstep(0, 1, fy - y0);
+      for (let x = 0; x < size; x++, i++) {
+        const fx = (x + 0.5) * scale - 0.5;
+        const x0 = Math.floor(fx);
+        const tx = smootherstep(0, 1, fx - x0);
+        const a = mix(this.get(x0, y0), this.get(x0 + 1, y0), tx);
+        const b = mix(this.get(x0, y0 + 1), this.get(x0 + 1, y0 + 1), tx);
+        dst.data[i] = mix(a, b, ty);
+      }
+    }
+    return dst;
   }
 
   get(x: number, y: number): number {

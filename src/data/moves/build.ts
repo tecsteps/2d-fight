@@ -36,6 +36,100 @@ import { POWER_PER_DAMAGE_DEALT, POWER_PER_DAMAGE_TAKEN } from './tuning';
 
 export const REF_HEIGHT = 1.75;
 
+/**
+ * Canonical state numbers.
+ *
+ * The layout follows M.U.G.E.N's so that anyone who has read a .cns file can
+ * read this: 0-199 movement and guard, 200-699 normals, 700-999 command
+ * normals and throws, 1000-2999 specials, 3000-3999 supers, 4000+ NeoMax,
+ * 5000+ hit reactions.
+ */
+export const S = {
+  STAND: 0,
+  TURN: 5,
+  CROUCH_DOWN: 10,
+  CROUCH_IDLE: 11,
+  CROUCH_UP: 12,
+  WALK_FWD: 20,
+  WALK_BACK: 21,
+  JUMP_START: 40,
+  JUMP_UP: 50,
+  JUMP_DOWN: 52,
+  LAND: 51,
+  RUN: 100,
+  RUN_STOP: 101,
+  BACKSTEP: 105,
+  BACKSTEP_LAND: 106,
+  ROLL_FWD: 110,
+  ROLL_BACK: 111,
+  GUARD_START: 120,
+  GUARD_STAND: 130,
+  GUARD_CROUCH: 131,
+  GUARD_AIR: 132,
+  GUARD_END: 140,
+  GUARDHIT_STAND: 150,
+  GUARDHIT_CROUCH: 152,
+  GUARDHIT_AIR: 155,
+
+  ST_A: 200,
+  ST_B: 210,
+  ST_C: 220,
+  ST_D: 230,
+  CR_A: 400,
+  CR_B: 410,
+  CR_C: 420,
+  CR_D: 430,
+  JP_A: 600,
+  JP_B: 610,
+  JP_C: 620,
+  JP_D: 630,
+
+  BLOWBACK: 700,
+  AIR_BLOWBACK: 701,
+  CMD_1: 710,
+  CMD_2: 720,
+
+  THROW_TRY: 800,
+  THROW_HIT: 810,
+  THROWN: 820,
+  THROW_TECH: 830,
+
+  HD_ACTIVATE: 900,
+  GC_ROLL: 910,
+  GC_BLOWBACK: 920,
+
+  SPECIAL_1: 1000,
+  SPECIAL_1_EX: 1010,
+  SPECIAL_2: 1100,
+  SPECIAL_2_EX: 1110,
+  SPECIAL_3: 1200,
+  SPECIAL_3_EX: 1210,
+  SPECIAL_4: 1300,
+  SPECIAL_4_EX: 1310,
+  SUPER: 3000,
+  SUPER_MAX: 3010,
+  NEOMAX: 4000,
+
+  HIT_STAND_L: 5000,
+  HIT_STAND_H: 5001,
+  HIT_CROUCH: 5010,
+  HIT_AIR: 5030,
+  HIT_CRUMPLE: 5040,
+  FALL: 5050,
+  DOWN_BOUNCE: 5100,
+  LYING: 5110,
+  GETUP: 5120,
+  UKEMI: 5140,
+  KO_FALL: 5150,
+  KO_LYING: 5160,
+  GUARD_CRUSH: 5300,
+
+  INTRO: 5900,
+  WIN: 5910,
+  LOSE: 5920,
+} as const;
+
+
 export type Grade = 'light' | 'medium' | 'heavy' | 'special' | 'ex' | 'super' | 'neomax';
 
 interface GradeProfile {
@@ -118,7 +212,7 @@ export interface AttackSpec {
   guardDamage?: number;
   chip?: number;
   priority?: number;
-  multiHit?: boolean;
+  hitInterval?: number;
   counterBonus?: number;
   noScaling?: boolean;
   impact?: number;
@@ -173,7 +267,7 @@ export function mkAttack(s: AttackSpec): AttackDef {
     driveHit: s.driveHit ?? g.driveHit,
     driveBlock: Math.round((s.driveHit ?? g.driveHit) * 0.5),
     priority: s.priority ?? g.priority,
-    multiHit: s.multiHit ?? false,
+    hitInterval: s.hitInterval ?? 0,
     counterBonus: s.counterBonus ?? 1,
     noScaling: s.noScaling ?? false,
     impact: s.impact ?? g.impact,
@@ -267,6 +361,7 @@ export interface AttackStateSpec {
   enterVel?: readonly [number, number];
   /** Air moves fall through to a landing state instead of a fixed recovery. */
   airborne?: boolean;
+  landState?: number;
   physics?: PhysicsMode;
   next?: number;
   onEnter?: StateDef['onEnter'];
@@ -318,6 +413,7 @@ export function attackState(spec: AttackStateSpec, height: number): StateDef {
     ctrl: false,
     duration: spec.airborne ? -1 : total,
     next: spec.next ?? (stance === 'crouch' ? S.CROUCH_IDLE : S.STAND),
+    landState: spec.airborne ? (spec.landState ?? S.LAND) : undefined,
     anim: spec.anim,
     boxes: track,
     attack,
@@ -332,9 +428,108 @@ export function attackState(spec: AttackStateSpec, height: number): StateDef {
   return st;
 }
 
-/** Cancel presets, in the order a KOF combo actually walks the ladder. */
+/**
+ * The fourteen slots every character fills.
+ *
+ * Naming the slot rather than the state number keeps a character file reading
+ * like a frame-data table instead of a list of magic numbers, and guarantees
+ * that j.C is always state 620 on everyone.
+ */
+const SLOTS = {
+  stA: { id: S.ST_A, anim: 'st-a', stance: 'stand' },
+  stB: { id: S.ST_B, anim: 'st-b', stance: 'stand' },
+  stC: { id: S.ST_C, anim: 'st-c', stance: 'stand' },
+  stD: { id: S.ST_D, anim: 'st-d', stance: 'stand' },
+  crA: { id: S.CR_A, anim: 'cr-a', stance: 'crouch' },
+  crB: { id: S.CR_B, anim: 'cr-b', stance: 'crouch' },
+  crC: { id: S.CR_C, anim: 'cr-c', stance: 'crouch' },
+  crD: { id: S.CR_D, anim: 'cr-d', stance: 'crouch' },
+  jA: { id: S.JP_A, anim: 'j-a', stance: 'air' },
+  jB: { id: S.JP_B, anim: 'j-b', stance: 'air' },
+  jC: { id: S.JP_C, anim: 'j-c', stance: 'air' },
+  jD: { id: S.JP_D, anim: 'j-d', stance: 'air' },
+  cmd1: { id: S.CMD_1, anim: 'cmd-1', stance: 'stand' },
+  cmd2: { id: S.CMD_2, anim: 'cmd-2', stance: 'stand' },
+} as const satisfies Record<string, { id: number; anim: string; stance: Stance }>;
+
+export type NormalSlot = keyof typeof SLOTS;
+
+type NormalSpec = Omit<AttackStateSpec, 'id' | 'name' | 'anim' | 'stance'> & { name?: string };
+
+/** Build one of the fourteen standard normals. */
+export function normal(height: number, slot: NormalSlot, spec: NormalSpec): StateDef {
+  const meta = SLOTS[slot];
+  const air = meta.stance === 'air';
+  return attackState(
+    {
+      ...spec,
+      id: meta.id,
+      name: spec.name ?? slot,
+      anim: meta.anim,
+      stance: meta.stance,
+      airborne: spec.airborne ?? air,
+      next: spec.next ?? (air ? S.LAND : undefined),
+    },
+    height,
+  );
+}
+
+/**
+ * A command grab: startup and recovery like a move, but the connect test is a
+ * range check rather than a hitbox, and there is nothing to block.
+ */
+export interface GrabStateSpec {
+  id: number;
+  name: string;
+  anim: string;
+  startup: number;
+  active: number;
+  recovery: number;
+  throw: ThrowDef;
+  ext?: readonly BoxTuple[];
+  invuln?: readonly InvulnWindow[];
+  cancel?: CancelRule;
+  enterVel?: readonly [number, number];
+  onTick?: StateDef['onTick'];
+}
+
+export function grabState(spec: GrabStateSpec, height: number): StateDef {
+  const s = height / REF_HEIGHT;
+  const base = scaleAll(hurtStand(), s);
+  const ext = spec.ext ? scaleAll(spec.ext, s) : [];
+  const track: FrameBoxes[] = [{ from: 0, hurt: base }];
+  if (ext.length) track.push({ from: spec.startup, hurt: [...base, ...ext] });
+  return {
+    id: spec.id,
+    name: spec.name,
+    type: StateType.Stand,
+    moveType: MoveType.Attack,
+    physics: PhysicsMode.Stand,
+    ctrl: false,
+    duration: spec.startup + spec.active + spec.recovery,
+    next: S.STAND,
+    anim: spec.anim,
+    boxes: track,
+    throw: spec.throw,
+    active: [{ from: spec.startup, to: spec.startup + spec.active - 1 }],
+    invuln: spec.invuln,
+    cancel: spec.cancel ?? { onContact: AttackTier.None, onWhiff: AttackTier.None },
+    enterVel: spec.enterVel,
+    onTick: spec.onTick,
+  };
+}
+
+/**
+ * Cancel presets.
+ *
+ * The ladder is free in one direction only: a move may be cancelled into
+ * anything strictly above it, once it has connected. Going sideways — special
+ * into special, DM into NeoMax — is what the Drive gauge and HD mode are for,
+ * so those presets leave the free tier empty and let `StateMachine` charge for
+ * it.
+ */
 export const CANCEL = {
-  /** Chainable light: into itself, into anything heavier, into specials and up. */
+  /** Chainable light: into itself, into the other lights, and up the ladder. */
   light(chain: readonly number[]): CancelRule {
     return { onContact: AttackTier.Normal, onWhiff: AttackTier.None, chain, self: true };
   },
@@ -347,19 +542,24 @@ export const CANCEL = {
     return { onContact: AttackTier.Special, onWhiff: AttackTier.None };
   },
   /**
-   * Special: normally terminal, but a Drive Cancel or HD cancel reopens it. The
-   * whiff tier lets a whiffed special still buy a super, which KOF allows.
+   * The poke a character is allowed to be sloppy with: cancellable into a
+   * special even when it hits nothing, which is how KOF's whiff-cancel pressure
+   * and its fake-out mixups work.
    */
-  special(): CancelRule {
-    return { onContact: AttackTier.Special, onWhiff: AttackTier.Super };
-  },
-  /** Cannot be cancelled out of at all. */
-  none(): CancelRule {
-    return { onContact: AttackTier.None, onWhiff: AttackTier.None };
-  },
-  /** Whiff-cancellable normal — the poke a character is allowed to be sloppy with. */
   whiffable(): CancelRule {
     return { onContact: AttackTier.CommandNormal, onWhiff: AttackTier.Special };
+  },
+  /** Special / EX: terminal unless a Drive Cancel or HD cancel pays for it. */
+  special(): CancelRule {
+    return { onContact: AttackTier.None, onWhiff: AttackTier.None };
+  },
+  /** DM: only an HD NeoMax cancel gets out of it. */
+  dm(): CancelRule {
+    return { onContact: AttackTier.None, onWhiff: AttackTier.None };
+  },
+  /** Cannot be cancelled out of by any means. */
+  locked(): CancelRule {
+    return { onContact: AttackTier.None, onWhiff: AttackTier.None, locked: true };
   },
 } as const;
 
@@ -370,96 +570,3 @@ export function inv(from: number, to: number, bits: number = Invuln.Full): Invul
 export function mkThrow(t: Omit<ThrowDef, 'tier'> & { tier?: AttackTier }): ThrowDef {
   return { ...t, tier: t.tier ?? AttackTier.CommandNormal };
 }
-
-/**
- * Canonical state numbers.
- *
- * The layout follows M.U.G.E.N's so that anyone who has read a .cns file can
- * read this: 0-199 movement and guard, 200-699 normals, 700-999 command
- * normals and throws, 1000-2999 specials, 3000-3999 supers, 4000+ NeoMax,
- * 5000+ hit reactions.
- */
-export const S = {
-  STAND: 0,
-  TURN: 5,
-  CROUCH_DOWN: 10,
-  CROUCH_IDLE: 11,
-  CROUCH_UP: 12,
-  WALK_FWD: 20,
-  WALK_BACK: 21,
-  JUMP_START: 40,
-  JUMP_UP: 50,
-  JUMP_DOWN: 52,
-  LAND: 51,
-  RUN: 100,
-  RUN_STOP: 101,
-  BACKSTEP: 105,
-  BACKSTEP_LAND: 106,
-  ROLL_FWD: 110,
-  ROLL_BACK: 111,
-  GUARD_START: 120,
-  GUARD_STAND: 130,
-  GUARD_CROUCH: 131,
-  GUARD_AIR: 132,
-  GUARD_END: 140,
-  GUARDHIT_STAND: 150,
-  GUARDHIT_CROUCH: 152,
-  GUARDHIT_AIR: 155,
-
-  ST_A: 200,
-  ST_B: 210,
-  ST_C: 220,
-  ST_D: 230,
-  CR_A: 400,
-  CR_B: 410,
-  CR_C: 420,
-  CR_D: 430,
-  JP_A: 600,
-  JP_B: 610,
-  JP_C: 620,
-  JP_D: 630,
-
-  BLOWBACK: 700,
-  AIR_BLOWBACK: 701,
-  CMD_1: 710,
-  CMD_2: 720,
-
-  THROW_TRY: 800,
-  THROW_HIT: 810,
-  THROWN: 820,
-  THROW_TECH: 830,
-
-  HD_ACTIVATE: 900,
-  GC_ROLL: 910,
-  GC_BLOWBACK: 920,
-
-  SPECIAL_1: 1000,
-  SPECIAL_1_EX: 1010,
-  SPECIAL_2: 1100,
-  SPECIAL_2_EX: 1110,
-  SPECIAL_3: 1200,
-  SPECIAL_3_EX: 1210,
-  SPECIAL_4: 1300,
-  SPECIAL_4_EX: 1310,
-  SUPER: 3000,
-  SUPER_MAX: 3010,
-  NEOMAX: 4000,
-
-  HIT_STAND_L: 5000,
-  HIT_STAND_H: 5001,
-  HIT_CROUCH: 5010,
-  HIT_AIR: 5030,
-  HIT_CRUMPLE: 5040,
-  FALL: 5050,
-  DOWN_BOUNCE: 5100,
-  LYING: 5110,
-  GETUP: 5120,
-  UKEMI: 5140,
-  KO_FALL: 5150,
-  KO_LYING: 5160,
-  GUARD_CRUSH: 5300,
-
-  INTRO: 5900,
-  WIN: 5910,
-  LOSE: 5920,
-} as const;

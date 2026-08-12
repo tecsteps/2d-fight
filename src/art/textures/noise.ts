@@ -23,6 +23,7 @@
 const F4 = (Math.sqrt(5) - 1) / 4;
 const G4 = (5 - Math.sqrt(5)) / 20;
 const TAU = Math.PI * 2;
+const INV255 = 1 / 255;
 
 /** Unit gradients for 2D lattice noise. Eight directions is plenty once fBm stacks them. */
 const GRAD2 = new Float32Array([
@@ -106,6 +107,12 @@ export interface WorleyOptions {
   jitter?: number;
   metric?: WorleyMetric;
   layer?: number;
+  /**
+   * Cell aspect ratio. Below 1 stretches cells along V, which is how skin
+   * furrows, leather grain and stone all actually look — isotropic cells read
+   * as bubble wrap.
+   */
+  aspect?: number;
 }
 
 const _worley: WorleyResult = { f1: 0, f2: 0, id: 0, dx: 0, dy: 0 };
@@ -293,46 +300,62 @@ export class Noise {
    */
   worley(u: number, v: number, freq: number, opts: WorleyOptions = {}): Readonly<WorleyResult> {
     const n = Math.max(1, Math.round(freq));
+    const m = Math.max(1, Math.round(freq * (opts.aspect ?? 1)));
     const jitter = opts.jitter ?? 1;
     const layer = opts.layer ?? 0;
     const metric = opts.metric ?? 'euclidean';
     const x = u * n;
-    const y = v * n;
+    const y = v * m;
     const cx = floorFast(x);
     const cy = floorFast(y);
 
+    // Hot loop: this runs nine times per texel and a texture is a quarter of a
+    // million texels. The three salts are hoisted, the two jitter draws share
+    // one cell hash, and the euclidean metric compares *squared* distances so
+    // only the two winners ever take a square root.
+    const p = this.perm;
+    const euclid = metric === 'euclidean';
+    const s0 = p[11];
+    const s1 = p[47];
+    const s2 = p[101];
+    const sl = p[layer & 255];
     let f1 = 1e9;
     let f2 = 1e9;
     let id = 0;
     let bx = 0;
     let by = 0;
     for (let oy = -1; oy <= 1; oy++) {
+      const gy = cy + oy;
+      // Cells only ever stray one step outside the tile, so the wrap is a pair
+      // of comparisons rather than two modulos.
+      let wy = gy;
+      if (wy < 0) wy += m; else if (wy >= m) wy -= m;
       for (let ox = -1; ox <= 1; ox++) {
         const gx = cx + ox;
-        const gy = cy + oy;
-        const wx = wrap(gx, n);
-        const wy = wrap(gy, n);
-        const px = gx + 0.5 + (this.r2(wx, wy, layer, 11) - 0.5) * jitter;
-        const py = gy + 0.5 + (this.r2(wx, wy, layer, 47) - 0.5) * jitter;
+        let wx = gx;
+        if (wx < 0) wx += n; else if (wx >= n) wx -= n;
+        const base = p[(p[(wx + sl) & 255] + wy) & 255];
+        const px = gx + 0.5 + (p[(base + s0) & 255] * INV255 - 0.5) * jitter;
+        const py = gy + 0.5 + (p[(base + s1) & 255] * INV255 - 0.5) * jitter;
         const dx = px - x;
         const dy = py - y;
         let d: number;
-        if (metric === 'manhattan') d = Math.abs(dx) + Math.abs(dy);
-        else if (metric === 'chebyshev') d = Math.max(Math.abs(dx), Math.abs(dy));
-        else d = Math.sqrt(dx * dx + dy * dy);
+        if (euclid) d = dx * dx + dy * dy;
+        else if (metric === 'manhattan') d = Math.abs(dx) + Math.abs(dy);
+        else d = Math.max(Math.abs(dx), Math.abs(dy));
         if (d < f1) {
           f2 = f1;
           f1 = d;
-          id = this.r2(wx, wy, layer, 101);
+          id = p[(base + s2) & 255] * INV255;
           bx = dx / n;
-          by = dy / n;
+          by = dy / m;
         } else if (d < f2) {
           f2 = d;
         }
       }
     }
-    _worley.f1 = f1;
-    _worley.f2 = f2;
+    _worley.f1 = euclid ? Math.sqrt(f1) : f1;
+    _worley.f2 = euclid ? Math.sqrt(f2) : f2;
     _worley.id = id;
     _worley.dx = bx;
     _worley.dy = by;
@@ -434,19 +457,36 @@ export function noise(seed = 0x1a2b3c): Noise {
 
 // -- small shaping helpers ---------------------------------------------------
 
+/**
+ * Positive modulo for cell indices.
+ *
+ * Anything keyed off `Math.floor(coordinate * count)` — per-thread dye lots,
+ * per-plank tone, per-band tension — has to be looked up through this or the
+ * *pattern* tiles while the *variation* does not, which produces the worst kind
+ * of seam: one you only notice on the fourth repeat.
+ */
+export function wrapIndex(i: number, n: number): number {
+  return ((i % n) + n) % n;
+}
+
 export function clamp01(x: number): number {
   return x < 0 ? 0 : x > 1 ? 1 : x;
 }
 
+/**
+ * Smoothstep, with `edge0 > edge1` meaning a *descending* ramp rather than an
+ * error — half the masks in this directory are "fade out as distance grows",
+ * and writing them backwards is how they read most clearly.
+ */
 export function smoothstep(edge0: number, edge1: number, x: number): number {
-  if (edge1 <= edge0) return x < edge0 ? 0 : 1;
+  if (edge0 === edge1) return x < edge0 ? 0 : 1;
   const t = clamp01((x - edge0) / (edge1 - edge0));
   return t * t * (3 - 2 * t);
 }
 
 /** Smoothstep that also flattens the *third* derivative — no Mach banding in a normal map. */
 export function smootherstep(edge0: number, edge1: number, x: number): number {
-  if (edge1 <= edge0) return x < edge0 ? 0 : 1;
+  if (edge0 === edge1) return x < edge0 ? 0 : 1;
   const t = clamp01((x - edge0) / (edge1 - edge0));
   return t * t * t * (t * (t * 6 - 15) + 10);
 }

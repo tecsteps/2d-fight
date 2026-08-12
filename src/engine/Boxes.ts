@@ -27,7 +27,7 @@ export interface AABB {
   y1: number;
 }
 
-export const enum BoxKind {
+export enum BoxKind {
   /** CLSN2 — can be hit here. */
   Hurt = 0,
   /** CLSN1 — hits here. */
