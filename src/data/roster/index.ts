@@ -230,8 +230,8 @@ export const MALI: FighterDef = {
   // is small without being slight — the read a Muay Thai fighter needs.
   proportions: {
     height: 1.63,
-    shoulder: 0.23,
-    hip: 0.234,
+    shoulder: 0.234,
+    hip: 0.221,
     build: 0.46,
     legRatio: 0.556,
     headRatio: 0.138,

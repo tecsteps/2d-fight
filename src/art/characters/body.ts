@@ -678,13 +678,13 @@ export function buildBodyPlan(m: RigMetrics, j: JointMap): BodyPlan {
     [0, headY + HL * 0.33, hz + HL * 0.4],
     HL * 0.032,
     HL * 0.048,
-    { sx: 1.1, sz: 0.85, k: 0.007 * H },
+    { sx: 1.1, sz: 0.85, k: 0.011 * H },
   );
   // Lips, then ears flattened against the skull.
-  P.point('head', [0, headY + HL * 0.225, hz + HL * 0.335], HW * 0.4, {
-    sy: 0.3,
-    sz: 0.38,
-    k: 0.007 * H,
+  P.point('head', [0, headY + HL * 0.22, hz + HL * 0.325], HW * 0.42, {
+    sy: 0.32,
+    sz: 0.4,
+    k: 0.009 * H,
   });
   P.point('head', [HW * 0.97, headY + HL * 0.45, hz - HL * 0.04], HL * 0.1, {
     // Thin enough to read as an ear, thick enough that the mesher can see it:
@@ -959,6 +959,18 @@ function buildLeg(P: Plan, m: RigMetrics, j: JointMap): void {
     n: [2.2, 2.2, 2.2, 2.2, 2.1],
     k: 0.006 * H,
   });
+  // Greater trochanter. The shelf where the pelvis hands over to the thigh —
+  // and on a wide-hipped figure the two are close to tangent there, which the
+  // mesher resolves as a pinch. Filling it with the mass that anatomically
+  // belongs there is both the cheaper and the better-looking fix.
+  P.point('thighL', new THREE.Vector3(hip.x * 1.02, hip.y + H * 0.012, -th * 0.1), th * 0.62, {
+    sx: 0.9,
+    sy: 1.05,
+    sz: 0.85,
+    n: 2.3,
+    k: 0.03 * H,
+  });
+
   // Quadriceps sweep: forward and slightly outboard, which is what gives a
   // strong fighter that teardrop above the knee in a front view.
   P.point('thighL', lerp(hip, knee, 0.62).add(new THREE.Vector3(th * 0.12, 0, th * 0.32)), th * (0.46 + 0.14 * build), {
@@ -1036,13 +1048,11 @@ function buildLeg(P: Plan, m: RigMetrics, j: JointMap): void {
  *   through a step: there is no line for the sole to hinge about, so a walk
  *   cycle slides the whole wedge.
  *
- * Local +Z is world up for everything here, so `sz` reads as height, and each
- * centre is placed at its own half-height — which puts the sole on y = 0
+ * Every centre is placed at its own half-height, which puts the sole on y = 0
  * exactly, for every fighter, without nudging the rig.
  */
 function buildFoot(P: Plan, m: RigMetrics, ankle: THREE.Vector3): void {
   const H = m.height;
-  const UP: [number, number, number] = [0, 1, 0];
   const FL = m.footLen;
   const HW = m.footHalf;
   const A = m.ankleY;
@@ -1097,10 +1107,9 @@ function buildFoot(P: Plan, m: RigMetrics, ankle: THREE.Vector3): void {
   // The body of the foot: heel to the ball, arched. Heights are fractions of
   // the ankle height, so the instep tops out just above the ankle joint on
   // every fighter and the foot never swallows the leg.
-  const zs = [az - FL * 0.2, az - FL * 0.05, az + FL * 0.14, az + FL * 0.36, az + FL * 0.5];
-  const rs = [HW * 0.74, HW * 0.8, HW * 0.83, HW * 1.0, HW * 0.99];
-  // Half-heights, then converted to the tube's radius multiplier.
-  const hh = [A * 0.6, A * 0.72, A * 0.55, A * 0.37, A * 0.29];
+  const zs = [az - FL * 0.2, az - FL * 0.05, az + FL * 0.14, az + FL * 0.36, az + FL * 0.46];
+  const rs = [HW * 0.74, HW * 0.8, HW * 0.83, HW * 1.0, HW * 0.97];
+  const hh = [A * 0.6, A * 0.72, A * 0.55, A * 0.37, A * 0.31];
   // The arch: the sole lifts between heel and ball, and the mid-foot slides
   // outboard so the medial edge lifts further than the lateral one.
   const lift = [0, FL * 0.012, FL * 0.05, 0, 0];
@@ -1112,10 +1121,20 @@ function buildFoot(P: Plan, m: RigMetrics, ankle: THREE.Vector3): void {
       hh[i] + lift[i],
       z,
     )),
-    r: rs,
-    sz: hh.map((h, i) => h / rs[i]),
+    // Note which dimension carries the profile radius, and why. A swept volume
+    // ends in a cap whose reach *along the axis* is the profile radius itself,
+    // unscaled — so a foot swept nose-first with the radius carrying its
+    // half-width ends in a 60 mm hemisphere pointing forward. That is the "ski
+    // tip" both reviews named: it is not a shape anyone authored, it is the end
+    // cap of the sweep, and it was long enough to swallow the toes whole.
+    //
+    // So the radius carries the foot's *height* and `sz` carries its width,
+    // with `ref` swapped to world +X to match. Same cross-section, but the cap
+    // is now 23 mm and the toes stand clear in front of it.
+    r: hh,
+    sz: rs.map((w, i) => w / hh[i]),
     n: [2.5, 2.7, 2.9, 3.1, 3.2],
-    ref: UP,
+    ref: [1, 0, 0],
     k: 0.005 * H,
   });
 
@@ -1123,25 +1142,27 @@ function buildFoot(P: Plan, m: RigMetrics, ankle: THREE.Vector3): void {
   // which is what a toe reads as at 4 px, and is honest about it: five fully
   // separated toes at this scale is noise that the ink pass then draws.
   const toeA = [-0.58, -0.16, 0.12, 0.36, 0.56];
-  const toeR = [0.33, 0.21, 0.195, 0.175, 0.15];
-  const toeL = [1.0, 0.98, 0.92, 0.83, 0.7];
-  const toeK = [0.005, 0.005, 0.005, 0.005, 0.005];
-  const baseZ = az + FL * 0.44;
+  const toeW = [0.33, 0.21, 0.195, 0.175, 0.15];
+  const toeLf = [1.0, 0.98, 0.92, 0.83, 0.7];
+  const baseZ = az + FL * 0.42;
   for (let t = 0; t < 5; t++) {
-    const r0 = HW * toeR[t];
-    const r1 = r0 * 0.86;
-    // Toes fan very slightly and the small ones curl down at the tip.
+    const w0 = HW * toeW[t];
+    const w1 = w0 * 0.86;
+    // Toe height, which is also the profile radius for the same reason as the
+    // foot above: it keeps the toe's rounded tip short instead of adding a
+    // toe's length again in cap.
+    const h0 = w0 * (t === 0 ? 0.92 : 0.8);
+    const h1 = h0 * 0.88;
     const x0 = tx + HW * toeA[t] * 0.92;
     const x1 = tx + HW * toeA[t] * 1.08;
-    const zEnd = baseZ + m.toeLen * toeL[t];
-    const szT = t === 0 ? 0.92 : 0.8;
+    const zEnd = baseZ + m.toeLen * toeLf[t] - h1;
     P.seg(
       'toeL',
-      new THREE.Vector3(x0, r0 * szT, baseZ - m.toeLen * 0.35),
-      new THREE.Vector3(x1, r1 * szT * 0.94, zEnd),
-      r0,
-      r1,
-      { sx: 0.94, sz: szT, n: 2.4, ref: UP, k: toeK[t] * H },
+      new THREE.Vector3(x0, h0, baseZ - m.toeLen * 0.3),
+      new THREE.Vector3(x1, h1, zEnd),
+      h0,
+      h1,
+      { sx: 0.98, sz: w0 / h0, n: 2.4, ref: [1, 0, 0], k: 0.005 * H },
     );
   }
 }
@@ -1263,7 +1284,7 @@ function surfaceNets(plan: BodyPlan, density: number): RawMesh {
   const handZ1 = j.handL.z + m.palmThick * 1.1;
 
   const xs = gradedAxis(minX - pad, maxX + pad, step, [
-    { lo: -0.1 * H, hi: 0.1 * H, mul: 2.2 },
+    { lo: -0.125 * H, hi: 0.125 * H, mul: 2.2 },
     { lo: handX0, hi: handX1, mul: 3.4 },
     { lo: -handX1, hi: -handX0, mul: 3.4 },
   ]);

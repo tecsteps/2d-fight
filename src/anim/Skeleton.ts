@@ -296,7 +296,7 @@ export function rigMetrics(def: FighterDef): RigMetrics {
     fingerR: palmHalf * 0.22,
     footHalf: footLen * 0.205,
     heelR: footLen * 0.15,
-    toeLen: footLen * 0.185,
+    toeLen: footLen * 0.245,
     // Authored stance, floored so the two feet cannot overlap across the
     // midline. Davi's narrow base put his feet through each other, and two
     // solids that intersect at the floor while their legs are already joined
